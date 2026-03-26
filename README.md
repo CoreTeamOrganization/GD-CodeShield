@@ -7,7 +7,7 @@
 In Unity: `Window → Package Manager → + → Add package from git URL`
 
 ```
-[https://github.com/YOUR_ORG/gd-quality.git](https://github.com/CoreTeamOrganization/GD-CodeShield.git)
+https://github.com/CoreTeamOrganization/GD-CodeShield.git
 ```
 
 ## Open
