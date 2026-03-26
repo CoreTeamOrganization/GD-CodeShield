@@ -1,6 +1,6 @@
 {
   "name": "com.gamedistrict.codeshield",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "displayName": "GD CodeShield",
   "description": "Game District developer quality tools: SOLID Review (AI-powered C# code analysis) and SDK Checklist (SDK key and configuration verifier).",
   "unity": "2021.3",
