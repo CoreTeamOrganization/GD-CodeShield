@@ -1,0 +1,26 @@
+{
+  "name": "com.gamedistrict.codeshield",
+  "version": "1.0.0",
+  "displayName": "GD CodeShield",
+  "description": "Game District developer quality tools: SOLID Review (AI-powered C# code analysis) and SDK Checklist (SDK key and configuration verifier).",
+  "unity": "2021.3",
+  "unityRelease": "0f1",
+  "author": {
+    "name": "Game District",
+    "email": "hello@gamedistrict.co",
+    "url": "https://gamedistrict.co"
+  },
+  "keywords": [
+    "solid",
+    "code-review",
+    "sdk",
+    "checklist",
+    "ai",
+    "quality",
+    "editor-tool"
+  ],
+  "category": "Editor",
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.0.2"
+  }
+}
