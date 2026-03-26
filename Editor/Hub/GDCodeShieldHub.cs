@@ -3,6 +3,7 @@
 
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.PackageManager;
 using System.Linq;
 using UnityEngine.Networking;
 
@@ -13,9 +14,9 @@ namespace GDCodeShield
         // ════════════════════════════════════════════════════════════════════════
         //  PALETTE  (matches gamedistrict.co + logo)
         // ════════════════════════════════════════════════════════════════════════
-        private static readonly Color C_BG      = new Color32(5,   5,   5,   255);
-        private static readonly Color C_SURF    = new Color32(18,  18,  18,  255);
-        private static readonly Color C_SURF2   = new Color32(28,  28,  28,  255);
+        private static readonly Color C_BG      = new Color32(42,  42,  42,  255); // logo charcoal #3A3A3A
+        private static readonly Color C_SURF    = new Color32(15,  15,  15,  255); // near-black card surface
+        private static readonly Color C_SURF2   = new Color32(22,  22,  22,  255);
         private static readonly Color C_BORDER  = new Color32(55,  55,  55,  255);
         private static readonly Color C_ACCENT  = new Color32(255, 211, 0,   255); // #FFD300
         private static readonly Color C_TEXT    = new Color32(255, 255, 255, 255);
@@ -63,6 +64,7 @@ namespace GDCodeShield
         // ════════════════════════════════════════════════════════════════════════
         private GUIStyle _sTitle, _sMuted;
         private bool     _stylesReady;
+        private string   _packageVersion = null; // loaded from package.json via PackageManager
 
         // ════════════════════════════════════════════════════════════════════════
         //  OPEN
@@ -78,11 +80,13 @@ namespace GDCodeShield
 
         private void OnEnable()
         {
-            _stylesReady  = false;
-            _icons        = new Texture2D[GameIconUrls.Length];
-            _iconsLoaded  = 0;
-            _iconsStarted = false;
+            _stylesReady    = false;
+            _packageVersion = null;
+            _icons          = new Texture2D[GameIconUrls.Length];
+            _iconsLoaded    = 0;
+            _iconsStarted   = false;
             StartIconDownloads();
+            FetchPackageVersion();
         }
 
         private void OnDisable()
@@ -91,6 +95,24 @@ namespace GDCodeShield
                 foreach (var t in _icons)
                     if (t != null) DestroyImmediate(t);
 
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
+        //  PACKAGE VERSION  — read live from PackageManager, never hardcoded
+        // ════════════════════════════════════════════════════════════════════════
+        private void FetchPackageVersion()
+        {
+            var listReq = Client.List(offlineMode: true, includeIndirectDependencies: false);
+            EditorApplication.update += Poll;
+            void Poll()
+            {
+                if (!listReq.IsCompleted) return;
+                EditorApplication.update -= Poll;
+                if (listReq.Status == StatusCode.Success)
+                    foreach (var pkg in listReq.Result)
+                        if (pkg.name == "com.gamedistrict.codeshield")
+                        { _packageVersion = pkg.version; Repaint(); break; }
+            }
         }
 
         // ════════════════════════════════════════════════════════════════════════
@@ -175,7 +197,7 @@ namespace GDCodeShield
                     {
                         var tex = _icons[slot % total]; slot++;
                         if (tex == null) continue;
-                        GUI.color = new Color(1f, 1f, 1f, 0.38f);
+                        GUI.color = new Color(1f, 1f, 1f, 0.55f); // more visible on charcoal
                         GUI.DrawTexture(new Rect(r.x + col * step + xOff - step * 0.6f,
                                                  r.y + row * step - step * 0.6f, sz, sz),
                                         tex, ScaleMode.ScaleToFit, true);
@@ -183,7 +205,7 @@ namespace GDCodeShield
                 }
                 GUI.color = Color.white;
                 // Dark scrim
-                EditorGUI.DrawRect(r, new Color(0f, 0f, 0f, 0.55f));
+                EditorGUI.DrawRect(r, new Color(0f, 0f, 0f, 0.38f)); // lighter scrim on charcoal bg
             }
 
             // Diagonal hatch
@@ -219,16 +241,23 @@ namespace GDCodeShield
             EditorGUI.DrawRect(new Rect(0, 3, w, 44), new Color(C_SURF.r, C_SURF.g, C_SURF.b, 0.92f));
             EditorGUI.DrawRect(new Rect(0, 47, w, 1), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f));
 
-            // ⚡ bolt + title
+            // ⚡ bolt
             GUI.Label(new Rect(14, 10, 24, 28), "⚡",
                 new GUIStyle(_sTitle) { fontSize = 18, normal = { textColor = C_ACCENT } });
-            GUI.Label(new Rect(36, 13, 200, 24), "GD CODESHIELD",
+            // Title — GD in accent, CODESHIELD in white
+            GUI.Label(new Rect(36, 13, 46, 24), "GD ",
+                new GUIStyle(_sTitle) { fontSize = 13, fontStyle = FontStyle.Bold, normal = { textColor = C_ACCENT } });
+            GUI.Label(new Rect(58, 13, 160, 24), "CODESHIELD",
                 new GUIStyle(_sTitle) { fontSize = 13, fontStyle = FontStyle.Bold, normal = { textColor = C_TEXT } });
 
-            // Version badge
-            Rect vb = new Rect(140, 17, 50, 16);
-            EditorGUI.DrawRect(vb, new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.12f));
-            GUI.Label(vb, "  v1.0.0", new GUIStyle(_sMuted) { fontSize = 9, normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.8f) } });
+            // Version badge — read from package.json at runtime
+            string verLabel = _packageVersion != null ? "  v" + _packageVersion : "";
+            if (!string.IsNullOrEmpty(verLabel))
+            {
+                Rect vb = new Rect(148, 17, 58, 16);
+                EditorGUI.DrawRect(vb, new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.12f));
+                GUI.Label(vb, verLabel, new GUIStyle(_sMuted) { fontSize = 9, normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.8f) } });
+            }
 
             // Right: "GAME DISTRICT"
             GUI.Label(new Rect(0, 14, w - 14, 20), "GAME DISTRICT",
@@ -529,8 +558,8 @@ namespace GDCodeShield
             tex.wrapMode   = TextureWrapMode.Repeat;
             var px = new Color32[S * S];
             for (int i = 0; i < px.Length; i++) px[i] = new Color32(0, 0, 0, 0);
-            var lc  = new Color32(255, 211, 0, 20);
-            var lc2 = new Color32(255, 211, 0, 8);
+            var lc  = new Color32(255, 211, 0, 28);
+            var lc2 = new Color32(255, 211, 0, 12);
             for (int i = 0; i < S; i++)
             {
                 int x = i, y = S - 1 - i;
