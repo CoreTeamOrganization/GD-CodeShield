@@ -13,7 +13,7 @@ namespace GDChecklist
     public class ChecklistWindow : EditorWindow
     {
         // ── Tabs ─────────────────────────────────────────────────────────────────
-        private static readonly string[] Tabs = { "AppLovin / AdMob", "Metica", "Adjust", "AppMetrica", "Firebase", "Ad Units" };
+        private static readonly string[] Tabs = { "AppLovin / AdMob", "Metica", "Adjust", "AppMetrica", "Firebase", "Ad Units", "Pre-Release", "Build", "Manual" };
         private int _tab = 0;
 
         // ── Scroll ────────────────────────────────────────────────────────────────
@@ -34,6 +34,7 @@ namespace GDChecklist
         private static readonly Color C_ORANGE = new Color32(255, 140, 40,  255);
         private static readonly Color C_TEXT   = new Color32(240, 240, 240, 255);
         private static readonly Color C_MUTED  = new Color32(140, 140, 140, 255);
+        private static readonly Color C_BLUE   = new Color32(100, 160, 255, 255); // Manual items
 
         private GUIStyle _sTitle, _sBody, _sMuted, _sCode;
         private bool _stylesReady;
@@ -52,7 +53,7 @@ namespace GDChecklist
 
         public static void Open()
         {
-            var w = GetWindow<ChecklistWindow>("GD Checklist");
+            var w = GetWindow<ChecklistWindow>("  GD Checklist");
             w.minSize = new Vector2(900, 560);
             w.Show();
         }
@@ -143,12 +144,6 @@ namespace GDChecklist
                 });
             }
 
-            // GAME DISTRICT label
-            GUI.Label(new Rect(position.width - 130, 16, 120, 18), "GAME DISTRICT",
-                new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleRight,
-                    normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.55f) } });
-
             float rx = position.width - 14;
 
             // Rescan button — results screen
@@ -168,7 +163,14 @@ namespace GDChecklist
                     _appScreen = AppScreen.Welcome;
                     Repaint();
                 }
+                rx -= 120;
             }
+
+            // GAME DISTRICT label — drawn last, right-aligned up to rx so it never overlaps buttons
+            GUI.Label(new Rect(160, 16, rx - 164, 18), "GAME DISTRICT",
+                new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleRight,
+                    normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.55f) } });
         }
 
         // ── Home screen ───────────────────────────────────────────────────────────
@@ -261,6 +263,10 @@ namespace GDChecklist
             if (cfg.AppMetrica) activeTabs.Add(("AppMetrica",       3));
             if (cfg.Firebase)   activeTabs.Add(("Firebase",         4));
             if (cfg.AdUnits)    activeTabs.Add(("Ad Units",         5));
+            // Always present — release checks
+            activeTabs.Add(("Pre-Release", GDChecklist.ReleaseScanner.TAB_PRERELEASE));
+            activeTabs.Add(("Build",       GDChecklist.ReleaseScanner.TAB_BUILD));
+            activeTabs.Add(("Manual",      GDChecklist.ReleaseScanner.TAB_MANUAL));
 
             // Clamp active tab to valid range
             if (_tab >= activeTabs.Count) _tab = 0;
@@ -273,29 +279,39 @@ namespace GDChecklist
             for (int i = 0; i < activeTabs.Count; i++)
             {
                 var (tabLabel, tabIndex) = activeTabs[i];
-                int issueCount = _scan.AllFields
-                    .Count(f => f.Tab == tabIndex && (f.Status == FieldStatus.Mismatch || f.Status == FieldStatus.Empty));
+                bool isManualTab    = tabIndex == GDChecklist.ReleaseScanner.TAB_MANUAL;
+                bool isReleaseTab   = tabIndex == GDChecklist.ReleaseScanner.TAB_PRERELEASE
+                                   || tabIndex == GDChecklist.ReleaseScanner.TAB_BUILD;
+                Color tabAccent = isManualTab ? C_BLUE : isReleaseTab ? C_ORANGE : C_ACCENT;
 
-                string label = issueCount > 0 ? $"{tabLabel}  ⚠{issueCount}" : tabLabel;
-                float tw = 140f;
+                int issueCount = isManualTab
+                    ? _scan.AllFields.Count(f => f.Tab == tabIndex && !_confirmed.Contains(f.FieldName))
+                    : _scan.AllFields.Count(f => f.Tab == tabIndex
+                        && (f.Status == FieldStatus.Mismatch || f.Status == FieldStatus.Empty
+                            || f.Status == FieldStatus.Missing));
+
+                string label = issueCount > 0
+                    ? (isManualTab ? $"{tabLabel}  ☐{issueCount}" : $"{tabLabel}  ⚠{issueCount}")
+                    : tabLabel;
+                float tw = Mathf.Max(label.Length * 7.2f + 16f, 90f);
                 bool active = i == _tab;
 
                 if (active)
                 {
-                    Bg(new Rect(tx, ty + 32, tw, 4), C_ACCENT);
+                    Bg(new Rect(tx, ty + 32, tw, 4), tabAccent);
                     GUI.Label(new Rect(tx, ty, tw, 36), label,
                         new GUIStyle(_sBody) { alignment = TextAnchor.MiddleCenter,
                             fontStyle = FontStyle.Bold,
-                            normal = { textColor = issueCount > 0 ? C_ORANGE : C_ACCENT } });
+                            normal = { textColor = issueCount > 0 ? tabAccent : tabAccent } });
                 }
                 else
                 {
                     GUI.Label(new Rect(tx, ty, tw, 36), label,
                         new GUIStyle(_sMuted) { alignment = TextAnchor.MiddleCenter,
-                            normal = { textColor = issueCount > 0 ? C_ORANGE : C_MUTED } });
+                            normal = { textColor = issueCount > 0 ? tabAccent : C_MUTED } });
                     if (Click(new Rect(tx, ty, tw, 36))) { _tab = i; Repaint(); }
                 }
-                tx += tw;
+                tx += tw + 2;
             }
             HRule(new Rect(body.x, ty + 35, body.width, 1), C_BORDER);
 
@@ -315,7 +331,13 @@ namespace GDChecklist
                 if (f.Section != lastSec) { contentH += 18 + 6; lastSec = f.Section; } // section label
                 bool editing = _editingFieldKey == FieldKey(f);
                 bool isEmpty = f.Status == FieldStatus.Empty;
-                contentH += (editing ? 60f : f.Status == FieldStatus.Mismatch ? 72f : isEmpty ? 60f : 36f) + 4f;
+                bool isManual = f.YamlKey == "manual";
+                bool isRelease = f.Tab == GDChecklist.ReleaseScanner.TAB_PRERELEASE
+                              || f.Tab == GDChecklist.ReleaseScanner.TAB_BUILD;
+                float rh = isManual ? 54f
+                         : isRelease ? (f.Status == FieldStatus.Mismatch || f.Status == FieldStatus.Missing ? 66f : 54f)
+                         : (editing ? 60f : f.Status == FieldStatus.Mismatch ? 72f : isEmpty ? 60f : 36f);
+                contentH += rh + 4f;
             }
             contentH += 32; // bottom padding
 
@@ -348,7 +370,13 @@ namespace GDChecklist
 
                 foreach (var f in sec)
                 {
-                    DrawFieldRow(f, x, ref y, w);
+                    if (f.YamlKey == "manual")
+                        DrawManualRow(f, x, ref y, w);
+                    else if (f.Tab == GDChecklist.ReleaseScanner.TAB_PRERELEASE
+                          || f.Tab == GDChecklist.ReleaseScanner.TAB_BUILD)
+                        DrawReleaseRow(f, x, ref y, w);
+                    else
+                        DrawFieldRow(f, x, ref y, w);
                 }
                 y += 6;
             }
@@ -357,6 +385,7 @@ namespace GDChecklist
         // ── Edit state ────────────────────────────────────────────────────────────
         private string _editingFieldKey = null;
         private string _editBuffer      = "";
+        private System.Collections.Generic.HashSet<string> _confirmed = new System.Collections.Generic.HashSet<string>();
 
         private string FieldKey(FieldResult f) => $"{f.Tab}_{f.Section}_{f.FieldName}_{f.Platform}";
 
@@ -523,6 +552,97 @@ namespace GDChecklist
         }
 
         // ════════════════════════════════════════════════════════════════════════
+        //  MANUAL ROW — device verification item with Confirm button
+        // ════════════════════════════════════════════════════════════════════════
+
+        private void DrawManualRow(FieldResult f, float x, ref float y, float w)
+        {
+            bool done  = _confirmed.Contains(f.FieldName);
+            Color col  = done ? C_GREEN : C_BLUE;
+            float rowH = 54f;
+
+            Bg(new Rect(x, y, w, rowH),      new Color(col.r, col.g, col.b, done ? 0.07f : 0.04f));
+            Outline(new Rect(x, y, w, rowH), new Color(col.r, col.g, col.b, 0.25f));
+            Bg(new Rect(x, y, 3, rowH), col);
+
+            GUI.Label(new Rect(x + 10, y + 8, 20, 20), done ? "✓" : "☐",
+                new GUIStyle(_sBody) { fontSize = 14, alignment = TextAnchor.MiddleCenter,
+                    normal = { textColor = col } });
+
+            GUI.Label(new Rect(x + 34, y + 7, w - 200, 18), f.FieldName,
+                new GUIStyle(_sBody) { fontSize = 11, fontStyle = FontStyle.Bold,
+                    normal = { textColor = C_TEXT } });
+
+            DrawPill(new Rect(x + w - 74, y + 8, 64, 16), done ? "Done" : "Manual",
+                done ? C_GREEN : C_BLUE);
+
+            GUI.Label(new Rect(x + 34, y + 27, w - 120, 14), f.ExpectedValue,
+                new GUIStyle(_sMuted) { fontSize = 10,
+                    normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.8f) } });
+
+            if (!done)
+            {
+                if (Btn(new Rect(x + w - 106, y + rowH - 26, 96, 20), "✓  Confirm", C_BLUE))
+                { _confirmed.Add(f.FieldName); Repaint(); }
+            }
+            else
+            {
+                if (Btn(new Rect(x + w - 80, y + rowH - 26, 70, 20), "↺ Undo", C_MUTED))
+                { _confirmed.Remove(f.FieldName); Repaint(); }
+            }
+            y += rowH + 4;
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
+        //  RELEASE ROW — Pre-Release / Build settings auto-check
+        // ════════════════════════════════════════════════════════════════════════
+
+        private void DrawReleaseRow(FieldResult f, float x, ref float y, float w)
+        {
+            Color col  = f.Status == FieldStatus.Match    ? C_GREEN
+                       : f.Status == FieldStatus.Mismatch ? C_RED
+                       : f.Status == FieldStatus.Missing  ? C_ORANGE
+                       : C_MUTED;
+
+            string icon = f.Status == FieldStatus.Match    ? "✓"
+                        : f.Status == FieldStatus.Mismatch ? "✗"
+                        : f.Status == FieldStatus.Missing  ? "⚠"
+                        : "—";
+
+            bool hasFix = f.Status != FieldStatus.Match && !string.IsNullOrEmpty(f.ExpectedValue);
+            float rowH  = hasFix ? 66f : 54f;
+
+            Bg(new Rect(x, y, w, rowH),      new Color(col.r, col.g, col.b,
+                f.Status == FieldStatus.Mismatch ? 0.07f : 0.04f));
+            Outline(new Rect(x, y, w, rowH), new Color(col.r, col.g, col.b, 0.25f));
+            Bg(new Rect(x, y, 3, rowH), col);
+
+            GUI.Label(new Rect(x + 10, y + (rowH/2) - 8, 16, 16), icon,
+                new GUIStyle(_sBody) { normal = { textColor = col } });
+
+            GUI.Label(new Rect(x + 30, y + 8, w - 160, 16), f.FieldName,
+                new GUIStyle(_sBody) { fontSize = 11, fontStyle = FontStyle.Bold });
+
+            DrawPill(new Rect(x + w - 80, y + 8, 70, 16),
+                f.Status == FieldStatus.Match ? "Pass" :
+                f.Status == FieldStatus.Mismatch ? "Fail" :
+                f.Status == FieldStatus.Missing ? "Warn" : "—", col);
+
+            // Detail value
+            GUI.Label(new Rect(x + 30, y + 26, w - 100, 14), f.ProjectValue ?? "",
+                new GUIStyle(_sMuted) { fontSize = 10,
+                    normal = { textColor = new Color(col.r, col.g, col.b, 0.85f) } });
+
+            // Fix instruction on fail/warn
+            if (hasFix)
+                GUI.Label(new Rect(x + 30, y + 42, w - 100, 13), "Fix: " + f.ExpectedValue,
+                    new GUIStyle(_sMuted) { fontSize = 9,
+                        normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.65f) } });
+
+            y += rowH + 4;
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
         //  WELCOME SCREEN — first question: GD SDK or not?
         // ════════════════════════════════════════════════════════════════════════
 
@@ -548,7 +668,7 @@ namespace GDChecklist
                 new GUIStyle(_sTitle) { fontSize = 20, normal = { textColor = C_TEXT } }); iy += 38;
 
             GUI.Label(new Rect(card.x + 20, iy, cw - 40, 16),
-                "This determines which SDKs and settings we check for your project.",
+                "This helps us pre-select which SDKs to check. You can confirm or adjust on the next screen.",
                 new GUIStyle(_sMuted) { fontSize = 10 }); iy += 30;
 
             Bg(new Rect(card.x + 20, iy, cw - 40, 1),
@@ -572,15 +692,28 @@ namespace GDChecklist
                 new GUIStyle(_sBody) { fontSize = 12, fontStyle = FontStyle.Bold,
                     normal = { textColor = C_ACCENT } });
             GUI.Label(new Rect(yesRect.x + 14, yesRect.y + 34, btnW - 20, 30),
-                "Auto-detects all SDKs\nfrom your project files",
+                "Pre-selects detected SDKs\nYou confirm on next screen",
                 new GUIStyle(_sMuted) { fontSize = 10 });
 
             if (Click(yesRect))
             {
-                // Mark as GD SDK dev — auto-detect handles the rest
-                SDKConfig.IsGDSDK    = true;
-                SDKConfig.IsSetupDone = true;
-                _appScreen = AppScreen.Home;
+                SDKConfig.IsGDSDK = true;
+                // Pre-tick SDKs based on what we detect in the project
+                // Developer can uncheck anything before confirming
+                _tmp_AppLovin   = SDKConfig.HasAppLovin();
+                _tmp_Metica     = SDKConfig.HasMetica();
+                _tmp_Adjust     = SDKConfig.HasAdjust();
+                _tmp_AppMetrica = SDKConfig.HasAppMetrica();
+                _tmp_Firebase   = SDKConfig.HasFirebase();
+                _tmp_AdUnits    = SDKConfig.HasAdUnits();
+                // If nothing detected, tick all so developer sees everything
+                if (!_tmp_AppLovin && !_tmp_Metica && !_tmp_Adjust &&
+                    !_tmp_AppMetrica && !_tmp_Firebase && !_tmp_AdUnits)
+                {
+                    _tmp_AppLovin = _tmp_Metica = _tmp_Adjust =
+                    _tmp_AppMetrica = _tmp_Firebase = _tmp_AdUnits = true;
+                }
+                _appScreen = AppScreen.Setup;
                 Repaint();
             }
 
@@ -629,9 +762,17 @@ namespace GDChecklist
             float iy = card.y + 20;
             Bg(new Rect(card.x, iy, cw, 3), C_ACCENT); iy += 12;
 
+            // ← Back button — top left of card
+            if (Btn(new Rect(card.x + 14, iy, 64, 20), "← Back", C_MUTED))
+            {
+                _appScreen = AppScreen.Welcome;
+                Repaint();
+            }
+
             // Header
             GUI.Label(new Rect(card.x + 20, iy, cw - 40, 13), "F I R S T   T I M E   S E T U P",
                 new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleCenter,
                     normal = { textColor = C_ACCENT } }); iy += 18;
 
             GUI.Label(new Rect(card.x + 20, iy, cw - 40, 28), "Which SDKs does this game use?",
@@ -758,6 +899,9 @@ namespace GDChecklist
         {
             var config = SDKConfig.BuildScanConfig();
             _scan = AssetScanner.Scan(Application.dataPath, json, config);
+            // Append release + manual checks to same ScanResult
+            GDChecklist.ReleaseScanner.AppendChecks(_scan, Application.dataPath);
+            _confirmed.Clear();
             _tab  = 0;
             _appScreen = AppScreen.Results;
             Repaint();

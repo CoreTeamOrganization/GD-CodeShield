@@ -4,6 +4,7 @@
 // If GD SDK absent   → show setup screen so external dev picks which SDKs they have.
 
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
@@ -47,38 +48,66 @@ namespace GDChecklist
             return File.Exists(path);
         }
 
-        // Metica — MeticaSettings.asset in Configurations + MeticaNetworkSO enabled
+        // Metica — check GD Configurations path first, then search project-wide
         public static bool HasMetica()
         {
-            string path = Path.Combine(Application.dataPath, GD_CONFIG_PATH, "MeticaSettings.asset");
-            return File.Exists(path) && IsNetworkEnabled("MeticaNetworkSO");
+            string gdPath = Path.Combine(Application.dataPath, GD_CONFIG_PATH, "MeticaSettings.asset");
+            if (File.Exists(gdPath)) return true;
+            return FindAssetAnywhere("MeticaSettings.asset") != null;
         }
 
-        // Adjust — AdjustToken.asset in Configurations + AdjustNetworkSO enabled
+        // Adjust — check GD Configurations path first, then search project-wide
         public static bool HasAdjust()
         {
-            string path = Path.Combine(Application.dataPath, GD_CONFIG_PATH, "AdjustToken.asset");
-            return File.Exists(path) && IsNetworkEnabled("AdjustNetworkSO");
+            string gdPath = Path.Combine(Application.dataPath, GD_CONFIG_PATH, "AdjustToken.asset");
+            if (File.Exists(gdPath)) return true;
+            return FindAssetAnywhere("AdjustToken.asset") != null;
         }
 
-        // AppMetrica — AppMetricaSettings.asset + AppMetricaNetworkSO enabled
+        // AppMetrica — check GD Configurations path first, then search project-wide
         public static bool HasAppMetrica()
         {
-            string path = Path.Combine(Application.dataPath, GD_CONFIG_PATH, "AppMetricaSettings.asset");
-            return File.Exists(path) && IsNetworkEnabled("AppMetricaNetworkSO");
+            string gdPath = Path.Combine(Application.dataPath, GD_CONFIG_PATH, "AppMetricaSettings.asset");
+            if (File.Exists(gdPath)) return true;
+            return FindAssetAnywhere("AppMetricaSettings.asset") != null
+                || FindAssetAnywhere("YandexMetricaSettings.asset") != null;
         }
 
-        // Firebase — FirebaseNetworkSO enabled + google-services.json present
+        // Firebase — check NetworkSO OR presence of google-services.json
         public static bool HasFirebase()
         {
-            return IsNetworkEnabled("FirebaseNetworkSO");
+            if (IsNetworkEnabled("FirebaseNetworkSO")) return true;
+            return FindFileAnywhere("google-services.json") != null
+                || FindFileAnywhere("GoogleService-Info.plist") != null;
         }
 
-        // AdUnits — AdUnitsSettings.asset in Configurations
+        // AdUnits — check GD Configurations path first, then search project-wide
         public static bool HasAdUnits()
         {
-            string path = Path.Combine(Application.dataPath, GD_CONFIG_PATH, "AdUnitsSettings.asset");
-            return File.Exists(path);
+            string gdPath = Path.Combine(Application.dataPath, GD_CONFIG_PATH, "AdUnitsSettings.asset");
+            if (File.Exists(gdPath)) return true;
+            return FindAssetAnywhere("AdUnitsSettings.asset") != null;
+        }
+
+        // ── Search helpers ────────────────────────────────────────────────────────
+        private static string FindAssetAnywhere(string fileName)
+        {
+            try
+            {
+                return Directory.GetFiles(Application.dataPath, fileName, SearchOption.AllDirectories)
+                    .FirstOrDefault()?.Replace('\\', '/');
+            }
+            catch { return null; }
+        }
+
+        private static string FindFileAnywhere(string fileName)
+        {
+            try
+            {
+                return Directory.GetFiles(Application.dataPath, fileName, SearchOption.AllDirectories)
+                    .FirstOrDefault()?.Replace('\\', '/');
+            }
+            catch { return null; }
         }
 
         // ── Manual override — for external devs without GD SDK ────────────────────

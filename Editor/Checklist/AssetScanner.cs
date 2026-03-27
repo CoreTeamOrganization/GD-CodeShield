@@ -84,7 +84,7 @@ namespace GDChecklist
             if (config.Adjust)     ScanAdjust     (allAssets, result, jsonOverrides, !config.IsGDSDK);
             if (config.AppMetrica) ScanAppMetrica (allAssets, result, jsonOverrides, !config.IsGDSDK);
             if (config.Firebase)   ScanFirebase   (allAssets, result, jsonOverrides);
-            if (config.AdUnits)    ScanAdUnits    (allAssets, result, jsonOverrides);
+            if (config.AdUnits)    ScanAdUnits    (allAssets, result, jsonOverrides, config);
 
             return result;
         }
@@ -154,7 +154,9 @@ namespace GDChecklist
         private static void ScanMetica(List<string> assets, ScanResult result,
                                         Dictionary<string, string> overrides, bool isExternalDev = false)
         {
-            var file = FindAsset(assets, "MeticaSettings");
+            // Check GD SDK Configurations path first, fall back to broad search
+            string gdPath = Path.Combine(Application.dataPath, "Configurations", "MeticaSettings.asset");
+            var file = File.Exists(gdPath) ? gdPath.Replace('\\', '/') : FindAsset(assets, "MeticaSettings");
 
             AddField(result, TAB_METICA, "API Keys", "Android API Key", "Android",
                 "AndroidApiKey", file, GetYaml(file, "AndroidApiKey"),
@@ -178,7 +180,8 @@ namespace GDChecklist
         private static void ScanAdjust(List<string> assets, ScanResult result,
                                         Dictionary<string, string> overrides, bool isExternalDev = false)
         {
-            var file = FindAsset(assets, "AdjustToken");
+            string gdPath = Path.Combine(Application.dataPath, "Configurations", "AdjustToken.asset");
+            var file = File.Exists(gdPath) ? gdPath.Replace('\\', '/') : FindAsset(assets, "AdjustToken");
 
             AddField(result, TAB_ADJUST, "Tokens", "Android Token", "Android",
                 "Android", file, GetYaml(file, "Android"),
@@ -264,7 +267,10 @@ namespace GDChecklist
         private static void ScanAppMetrica(List<string> assets, ScanResult result,
                                             Dictionary<string, string> overrides, bool isExternalDev = false)
         {
-            var file = FindAsset(assets, "AppMetricaSettings");
+            string gdPath = Path.Combine(Application.dataPath, "Configurations", "AppMetricaSettings.asset");
+            var file = File.Exists(gdPath) ? gdPath.Replace('\\', '/')
+                     : FindAsset(assets, "AppMetricaSettings")
+                    ?? FindAsset(assets, "YandexMetricaSettings");
 
             AddField(result, TAB_APPMETRICA, "API Keys", "Android API Key", "Android",
                 "Android", file, GetYaml(file, "Android"),
@@ -348,9 +354,11 @@ namespace GDChecklist
         // ── Ad Units ──────────────────────────────────────────────────────────────
 
         private static void ScanAdUnits(List<string> assets, ScanResult result,
-                                         Dictionary<string, string> overrides)
+                                         Dictionary<string, string> overrides,
+                                         SDKScanConfig config = null)
         {
-            var file = FindAsset(assets, "AdUnitsSettings");
+            string gdPath = Path.Combine(Application.dataPath, "Configurations", "AdUnitsSettings.asset");
+            var file = File.Exists(gdPath) ? gdPath.Replace('\\', '/') : FindAsset(assets, "AdUnitsSettings");
 
             if (file == null)
             {
@@ -394,10 +402,14 @@ namespace GDChecklist
                 Status        = string.IsNullOrEmpty(showAppopen) ? FieldStatus.Missing : FieldStatus.Match
             });
 
-            // Parse each network block separately
-            ScanNetworkBlock(result, file, content, "Applovin",  TAB_ADUNITS, overrides);
-            ScanNetworkBlock(result, file, content, "Admob",     TAB_ADUNITS, overrides);
-            ScanNetworkBlock(result, file, content, "Metica",    TAB_ADUNITS, overrides);
+            // Parse each network block — only scan networks that were selected
+            // AppLovin/AdMob always go together (same asset)
+            if (config == null || config.AppLovin)
+                ScanNetworkBlock(result, file, content, "Applovin", TAB_ADUNITS, overrides);
+            if (config == null || config.AppLovin)
+                ScanNetworkBlock(result, file, content, "Admob",    TAB_ADUNITS, overrides);
+            if (config == null || config.Metica)
+                ScanNetworkBlock(result, file, content, "Metica",   TAB_ADUNITS, overrides);
         }
 
         private static void ScanNetworkBlock(ScanResult result, string file, string content,
