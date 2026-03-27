@@ -11,7 +11,7 @@ GD CodeShield is Game District's internal Unity editor toolkit that catches code
 In Unity: `Window → Package Manager → + → Add package from git URL`
 
 ```
-https://github.com/CoreTeamOrganization/GD-CodeShield.git
+https://github.com/GameDistrict/gd-codeshield.git#2.0.0
 ```
 
 **Requirements:**
@@ -61,7 +61,7 @@ Each file gets a score of **1–5 per principle** based on the GD Easy Rating Gu
 
 - **Sidebar** — all scanned files with per-file violation count and colour-coded severity
 - **Detail panel** — exact line number, which rule is broken, and why
-- **Principle badges** — SRP · OCP · LSP · ISP pills in the top bar show at a glance which principles have issues
+- **Principle badges** — SRP · OCP · LSP · ISP pills in the top bar
 
 ### AI Fix Generation
 
@@ -70,7 +70,7 @@ With a Claude API key set, each violation gets a **Generate Fix** button:
 1. Claude reads the violating code in context
 2. Proposes a refactored version with an explanation
 3. You review the diff before applying anything
-4. A **Behavioural Contract Check** runs automatically — verifies all public methods are preserved before applying, protecting against breaking changes
+4. A **Behavioural Contract Check** runs automatically — verifies all public methods are preserved before applying
 5. After applying, a **Regression Test** compares behaviour before and after
 
 > Cost confirmation is shown before every API call — no surprise charges.
@@ -88,61 +88,84 @@ With a Claude API key set, each violation gets a **Generate Fix** button:
 
 ---
 
-## Tool 2 — SDK Checklist
+## Tool 2 — GD Checklist
 
-> *Verifies that all SDK keys, App IDs, and network configurations are correctly set in your project.*
+> *Full release checklist — SDK keys, Player Settings, Build config, and manual device verification. Single scan, everything in one place.*
 
 ### What it checks
 
-SDK Checklist scans your project's `.asset` files and validates configuration across six SDK categories:
+GD Checklist runs two types of checks in a single scan:
+
+**Auto-checked** — reads your project files and settings directly, no manual work:
 
 | Tab | What it validates |
 |---|---|
-| **AppLovin / AdMob** | App IDs, banner / interstitial / rewarded Ad Unit IDs per platform |
-| **Metica** | API keys and environment configuration |
-| **Adjust** | App tokens, environment mode (sandbox vs production), event tokens |
-| **AppMetrica** | API key presence and activation state |
-| **Firebase** | `google-services.json` / `GoogleService-Info.plist` presence, project ID |
-| **Ad Units** | All ad unit IDs populated, no placeholder values left |
+| **AppLovin / AdMob** | SDK key, AdMob App IDs (Android + iOS) |
+| **Metica** | API keys and App IDs (Android + iOS) |
+| **Adjust** | App tokens, environment (must be Production for release), log level |
+| **AppMetrica** | API keys, crash reporting, session tracking, log settings |
+| **Firebase** | `google-services.json` + `GoogleService-Info.plist` present, network settings |
+| **Ad Units** | All ad unit IDs per network (Interstitial, Rewarded, Banner, MRec, AppOpen) |
+| **Pre-Release** | App version, bundle code, Graphics API = OpenGLES3, Require ES3.1 unchecked, Unity Services connected, Firebase files present, Adjust environment = Production, AppLovin Max Terms + Ad Review unchecked, AppMetrica auto-collection off |
+| **Build** | Create symbols.zip = Public, Compression = LZ4HC |
+| **Manual** | 20 device verification items — Debugging, Dashboards, Post-Release |
 
-Each field shows one of three states:
-
-- ✅ **Match** — value present and valid
-- ⚠️ **Mismatch** — value present but looks wrong (e.g. still in sandbox mode, placeholder detected)
-- ❌ **Empty** — required field is missing entirely
+Each field shows:
+- ✅ **Pass** — correct value confirmed
+- ❌ **Fail** — wrong value, with exact fix instruction
+- ⚠️ **Warn** — value set but needs attention
+- ☐ **Manual** — requires device verification, click **✓ Confirm** after checking
 
 ### How to use
 
 1. Open `Tools → GD CodeShield` → click **SDK CHECKLIST**
-2. Complete the one-time setup (auto-skipped for GD SDK projects)
-3. Click **Run Scan**
-4. Review results per SDK tab — each field shows its current value and pass/fail status
+2. Answer the setup question and select your SDKs (once only)
+3. Click **SCAN PROJECT**
+4. Work through each tab — fix auto-detected issues, confirm manual items on device
 
 ### First-time setup
 
-On first open the tool asks one question: **is this a GD SDK project?**
+On first open, the tool asks: **are you using the GD SDK?**
 
-**GD SDK project** (has `Assets/Configurations/SDKConfiguration.asset`):
-- Auto-detects which SDKs are active by reading your `NetworkSO` files directly
-- No manual configuration needed — hit Scan immediately
+Both paths go to the same SDK selection screen — the difference is how it pre-fills:
+
+**GD SDK project** (`Assets/Configurations/SDKConfiguration.asset` present):
+- SDKs are auto-detected from your project and pre-ticked
+- You can uncheck any SDK before confirming
+- Falls back to broad project-wide search if asset isn't at the expected GD path
 
 **External / non-GD project:**
-- Quick setup screen to tick which SDKs your project uses
-- Only those SDKs are checked — no false positives for SDKs you don't have
+- All SDKs unchecked by default — tick only what your project uses
+- Only selected SDKs are scanned — no false positives
+
+You can always return to this screen via **⚙ Change Setup** in the top bar. The setup screen also has a **← Back** button to return to the previous screen.
+
+### Ad Units tab — respects your selection
+
+The Ad Units tab only scans networks you selected during setup. If you unchecked Metica, no Metica ad unit rows appear. If you unchecked AppLovin, AppLovin and AdMob ad unit rows are skipped.
+
+### Manual tab
+
+20 items that can only be verified on a real device, grouped by category:
+
+| Category | Items |
+|---|---|
+| **Monetization** | Firebase remote config updated, test + real ads verified, AppOpen from 2nd launch only, IAP working, consent + privacy policy current |
+| **Debugging** | Adjust production + sandbox verified, internet panel shows correctly |
+| **Permissions** | APK permissions checked via analyzer tool |
+| **Dashboards** | Adjust testing console, Firebase DebugView, AppMetrica events |
+| **Submission** | Symbol files provided with build |
+| **Post-Release** | AppMetrica users + revenue normal, Firebase revenue + installs normal, Adjust installs + revenue normal, Play Console Android vitals, AppLovin ad units active + view rate consistent |
+
+Each item has a **✓ Confirm** button — tap it after verifying on device. Confirmed items turn green. Use **↺ Undo** to unconfirm if needed.
 
 ### JSON Import
 
-If your expected SDK config is tracked in a JSON file (e.g. from a config management system):
-
-1. Click **Import from JSON** on the home screen
-2. Paste your expected config JSON
-3. Click **Import & Scan** — the tool compares live project values against your expected values
-
-Useful for catching drift between what was agreed and what was actually implemented.
+Paste your expected SDK config JSON on the home screen to compare live project values against an expected config. Useful for catching drift between what was agreed and what was actually implemented.
 
 ### Rescan and reset
 
-- **↺ Rescan** — reruns the scan without leaving the results view
+- **↺ Rescan** — reruns the full scan without leaving the results view
 - **⚙ Change Setup** — resets SDK selection if your project's stack changes
 
 ---
@@ -151,26 +174,45 @@ Useful for catching drift between what was agreed and what was actually implemen
 
 The hub (`Tools → GD CodeShield`) is a fixed 640×420 launcher window:
 
-- Game icon wallpaper loaded async from `gamedistrict.co` (16 icons, parallel download, 8s timeout — silent fallback if offline)
-- Animated cards — hover to see glow, expanding underline, and button fill
-- Yellow card = SOLID Review, Green card = SDK Checklist
+- Game icon wallpaper loaded async from `gamedistrict.co` (16 icons, parallel, 8s timeout — silent fallback if offline)
+- Animated cards — hover to see glow, underline expansion, and button fill
+- Dynamic version badge reads live from PackageManager — always shows the installed version
+- Yellow card = SOLID Review · Green card = GD Checklist
 
 ---
 
 ## Changelog
 
+### [2.0.0]
+- **GD Checklist completely overhauled** — merged SDK key validation with full release checklist
+- Added Pre-Release tab: app version, bundle code, GraphicsAPI, Unity Services, Firebase files, Adjust environment, AppLovin flags, AppMetrica auto-collection
+- Added Build tab: symbols public, LZ4HC compression
+- Added Manual tab: 20 device verification items with ✓ Confirm / ↺ Undo per item
+- Setup screen now shown for both GD SDK and non-GD SDK users
+- GD SDK path: SDKs auto-detected and pre-ticked, developer can adjust before confirming
+- Added ← Back button on setup screen
+- Fixed "GAME DISTRICT" label overlapping buttons in top bar
+- Ad Units tab now only scans networks selected during setup
+- AssetScanner falls back to broad project search if asset not at expected GD path
+- Fixed System.Linq missing from SDKConfig.cs
+
+### [1.0.4]
+- Hub background updated to GD logo charcoal (#3A3A3A)
+
+### [1.0.3]
+- Version badge reads live from PackageManager — no longer hardcoded
+- Hub title: "GD" in yellow, "CODESHIELD" in white
+
 ### [1.0.2]
 - Card icons redrawn as pure IMGUI vector shapes — no Texture2D, no external assets
 - SOLID Review card: shield outline with bold S letterform
-- SDK Checklist card: 3-row checklist with tick marks and text lines
+- GD Checklist card: 3-row checklist with tick marks
 
 ### [1.0.1]
 - Added card icons for both tools
 
 ### [1.0.0]
-- Initial unified release combining GD SOLID Review (v1.0.9) and GD Checklist
-- New GD CodeShield hub launcher (`Tools → GD CodeShield`)
-- Animated hover cards — glow, underline expansion, button fill on hover
-- Game icon wallpaper (async, silent, timeout-safe)
+- Initial release combining GD SOLID Review and GD Checklist
+- GD CodeShield hub launcher (`Tools → GD CodeShield`)
+- Animated hover cards, game icon wallpaper (async, silent, timeout-safe)
 - Single UPM package `com.gamedistrict.codeshield`, single asmdef `GD.CodeShield.Editor`
-- Both individual tool MenuItems removed — Hub is the only entry point
