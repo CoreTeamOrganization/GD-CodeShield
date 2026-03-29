@@ -10,14 +10,32 @@
 const path = require("path");
 const fs   = require("fs");
 
-// docx is bundled in node_modules~/ (tilde suffix = ignored by Unity asset importer).
-// Node.js require works fine with the explicit path.
+// docx is bundled alongside this script.
+// Unity ignores node_modules~ (tilde suffix). Node resolves it fine via explicit path.
+function loadDocx() {
+  // Try node_modules~ first (Unity-safe name)
+  const tildePath = path.join(__dirname, "node_modules~", "docx");
+  if (fs.existsSync(tildePath)) return require(tildePath);
+
+  // Fallback: plain node_modules (in case git renamed it back)
+  const plainPath = path.join(__dirname, "node_modules", "docx");
+  if (fs.existsSync(plainPath)) return require(plainPath);
+
+  // Nothing found — give a clear actionable error
+  throw new Error(
+    "Cannot find bundled 'docx' package.\n" +
+    "Expected at: " + tildePath + "\n" +
+    "Make sure the node_modules~ folder was committed to the Git repo and is present next to solid_report.js.\n" +
+    "Run: cd DocxGen && npm install    to reinstall it."
+  );
+}
+
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   PageBreak, AlignmentType, BorderStyle, WidthType, ShadingType,
   VerticalAlign, HeadingLevel, LevelFormat, Header, Footer, PageNumber,
   NumberFormat
-} = require(path.join(__dirname, "node_modules~", "docx"));
+} = loadDocx();
 
 // ── Colours (hex without #) ──────────────────────────────────────────────────
 const GD_YELLOW   = "FFD000";
