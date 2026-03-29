@@ -10,14 +10,14 @@
 const path = require("path");
 const fs   = require("fs");
 
-// docx is bundled locally in node_modules/ next to this script.
-// No global npm install required on the developer's machine.
+// docx is bundled in node_modules~/ (tilde suffix = ignored by Unity asset importer).
+// Node.js require works fine with the explicit path.
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   PageBreak, AlignmentType, BorderStyle, WidthType, ShadingType,
   VerticalAlign, HeadingLevel, LevelFormat, Header, Footer, PageNumber,
   NumberFormat
-} = require(path.join(__dirname, "node_modules", "docx"));
+} = require(path.join(__dirname, "node_modules~", "docx"));
 
 // ── Colours (hex without #) ──────────────────────────────────────────────────
 const GD_YELLOW   = "FFD000";
