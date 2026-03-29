@@ -267,7 +267,6 @@ namespace GDChecklist
             activeTabs.Add(("Pre-Release", GDChecklist.ReleaseScanner.TAB_PRERELEASE));
             activeTabs.Add(("Build",       GDChecklist.ReleaseScanner.TAB_BUILD));
             activeTabs.Add(("Manual",      GDChecklist.ReleaseScanner.TAB_MANUAL));
-            activeTabs.Add(("Key Integrity", 9));
 
             // Clamp active tab to valid range
             if (_tab >= activeTabs.Count) _tab = 0;
@@ -283,13 +282,10 @@ namespace GDChecklist
                 bool isManualTab    = tabIndex == GDChecklist.ReleaseScanner.TAB_MANUAL;
                 bool isReleaseTab   = tabIndex == GDChecklist.ReleaseScanner.TAB_PRERELEASE
                                    || tabIndex == GDChecklist.ReleaseScanner.TAB_BUILD;
-                bool isKeyTab       = tabIndex == 9;
-                Color tabAccent = isManualTab ? C_BLUE : isReleaseTab ? C_ORANGE : isKeyTab ? C_RED : C_ACCENT;
+                Color tabAccent = isManualTab ? C_BLUE : isReleaseTab ? C_ORANGE : C_ACCENT;
 
                 int issueCount = isManualTab
                     ? _scan.AllFields.Count(f => f.Tab == tabIndex && !_confirmed.Contains(f.FieldName))
-                    : tabIndex == 9
-                    ? (_keyIssues?.Count ?? 0)
                     : _scan.AllFields.Count(f => f.Tab == tabIndex
                         && (f.Status == FieldStatus.Mismatch || f.Status == FieldStatus.Empty
                             || f.Status == FieldStatus.Missing));
@@ -321,14 +317,6 @@ namespace GDChecklist
 
             // Get fields for the currently active tab
             int currentTabIndex = activeTabs.Count > 0 ? activeTabs[_tab].index : -1;
-            bool isKeyIntegrityTab = currentTabIndex == 9;
-
-            // Key Integrity tab has its own draw method
-            if (isKeyIntegrityTab)
-            {
-                DrawKeyIntegrityTab(new Rect(body.x, ty + 36, body.width, body.height - 36));
-                return;
-            }
 
             var fields = currentTabIndex >= 0
                 ? _scan.AllFields.Where(f => f.Tab == currentTabIndex).ToList()
@@ -399,7 +387,6 @@ namespace GDChecklist
         private string _editingFieldKey = null;
         private string _editBuffer      = "";
         private System.Collections.Generic.HashSet<string> _confirmed = new System.Collections.Generic.HashSet<string>();
-        private List<KeyValidationResult> _keyIssues = null;
 
         private string FieldKey(FieldResult f) => $"{f.Tab}_{f.Section}_{f.FieldName}_{f.Platform}";
 
@@ -654,99 +641,6 @@ namespace GDChecklist
                         normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.65f) } });
 
             y += rowH + 4;
-        }
-
-        // ════════════════════════════════════════════════════════════════════════
-        //  KEY INTEGRITY TAB
-        // ════════════════════════════════════════════════════════════════════════
-        private void DrawKeyIntegrityTab(Rect body)
-        {
-            var issues = _keyIssues;
-
-            // All clear state
-            if (issues == null || issues.Count == 0)
-            {
-                float cx = body.x + body.width  * 0.5f;
-                float cy = body.y + body.height * 0.5f;
-                Bg(new Rect(cx - 200, cy - 40, 400, 80), new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.06f));
-                Outline(new Rect(cx - 200, cy - 40, 400, 80), new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.3f));
-                GUI.Label(new Rect(cx - 190, cy - 26, 380, 24), "✓  All key formats look correct",
-                    new GUIStyle(_sBody) { fontSize = 14, fontStyle = FontStyle.Bold,
-                        alignment = TextAnchor.MiddleCenter, normal = { textColor = C_GREEN } });
-                GUI.Label(new Rect(cx - 190, cy + 2, 380, 20),
-                    "No mismatched keys detected across AppLovin, Metica, Adjust, AppMetrica and Ad Units",
-                    new GUIStyle(_sMuted) { fontSize = 10, alignment = TextAnchor.MiddleCenter });
-                return;
-            }
-
-            // Calculate scroll height
-            float contentH = 16f + issues.Count * (80f + 4f) + 32f;
-            _scroll = GUI.BeginScrollView(
-                body, _scroll,
-                new Rect(0, 0, body.width - 16, contentH));
-
-            float y = 16f;
-            float x = 14f;
-            float w = body.width - 44f;
-
-            // Header count
-            GUI.Label(new Rect(x, y, w, 16),
-                $"{issues.Count} key format issue{(issues.Count > 1 ? "s" : "")} detected — values are filled but appear to be the wrong type of key",
-                new GUIStyle(_sMuted) { fontSize = 10,
-                    normal = { textColor = new Color(C_RED.r, C_RED.g, C_RED.b, 0.85f) } });
-            y += 24f;
-
-            foreach (var issue in issues)
-            {
-                float rowH = 76f;
-
-                // Row bg
-                Bg(new Rect(x, y, w, rowH), new Color(C_RED.r, C_RED.g, C_RED.b, 0.07f));
-                Outline(new Rect(x, y, w, rowH), new Color(C_RED.r, C_RED.g, C_RED.b, 0.25f));
-                Bg(new Rect(x, y, 3, rowH), C_RED);
-
-                // Icon + SDK + field name
-                GUI.Label(new Rect(x + 10, y + 8, 16, 16), "✗",
-                    new GUIStyle(_sBody) { normal = { textColor = C_RED } });
-
-                string header = string.IsNullOrEmpty(issue.Platform)
-                    ? $"{issue.SDK}  —  {issue.FieldName}"
-                    : $"{issue.SDK}  —  {issue.FieldName}  ({issue.Platform})";
-
-                GUI.Label(new Rect(x + 30, y + 7, w - 120, 18), header,
-                    new GUIStyle(_sBody) { fontSize = 11, fontStyle = FontStyle.Bold,
-                        normal = { textColor = C_TEXT } });
-
-                DrawPill(new Rect(x + w - 80, y + 8, 70, 16), "Wrong Type", C_RED);
-
-                // Problem description
-                GUI.Label(new Rect(x + 30, y + 26, w - 40, 14), issue.Problem,
-                    new GUIStyle(_sMuted) { fontSize = 10,
-                        normal = { textColor = new Color(C_RED.r, C_RED.g, C_RED.b, 0.85f) } });
-
-                // Looks like (which SDK it was probably copied from)
-                if (!string.IsNullOrEmpty(issue.LooksLike))
-                {
-                    GUI.Label(new Rect(x + 30, y + 42, 90, 12), "Looks like:",
-                        new GUIStyle(_sMuted) { fontSize = 9,
-                            normal = { textColor = new Color(C_ORANGE.r, C_ORANGE.g, C_ORANGE.b, 0.8f) } });
-                    GUI.Label(new Rect(x + 124, y + 42, w - 134, 12), issue.LooksLike,
-                        new GUIStyle(_sMuted) { fontSize = 9,
-                            normal = { textColor = C_ORANGE } });
-                }
-
-                // Fix instruction
-                GUI.Label(new Rect(x + 30, y + 57, 30, 12), "Fix:",
-                    new GUIStyle(_sMuted) { fontSize = 9,
-                        normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.6f) } });
-                GUI.Label(new Rect(x + 64, y + 57, w - 74, 12), issue.Fix,
-                    new GUIStyle(_sMuted) { fontSize = 9,
-                        normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.7f) } });
-
-                y += rowH + 4f;
-            }
-
-            GUI.EndScrollView();
         }
 
         // ════════════════════════════════════════════════════════════════════════
@@ -1008,8 +902,6 @@ namespace GDChecklist
             _scan = AssetScanner.Scan(Application.dataPath, json, config);
             // Append release + manual checks to same ScanResult
             GDChecklist.ReleaseScanner.AppendChecks(_scan, Application.dataPath);
-            // Run key format validation
-            _keyIssues = KeyValidator.Validate(_scan);
             _confirmed.Clear();
             _tab  = 0;
             _appScreen = AppScreen.Results;
