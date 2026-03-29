@@ -39,10 +39,6 @@ namespace GDChecklist
         private GUIStyle _sTitle, _sBody, _sMuted, _sCode;
         private bool _stylesReady;
 
-        // ── JSON import state ─────────────────────────────────────────────────────
-        private string _jsonInput    = "";
-        private bool   _showJsonInput = false;
-
         // ── Setup screen state ────────────────────────────────────────────────────
         private enum AppScreen { Welcome, Setup, Home, Results }
         private AppScreen _appScreen = AppScreen.Welcome;
@@ -179,7 +175,7 @@ namespace GDChecklist
         {
             float cx = body.x + body.width / 2f;
             float cy = body.y + body.height / 2f;
-            float cw = 480f, ch = _showJsonInput ? 480f : 280f;
+            float cw = 480f, ch = 280f;
 
             Bg(new Rect(cx - cw/2 - 5, cy - ch/2 - 5, cw + 10, ch + 10), C_ACCENT);
             var card = new Rect(cx - cw/2, cy - ch/2, cw, ch);
@@ -216,24 +212,6 @@ namespace GDChecklist
                     normal = { textColor = new Color32(10, 10, 10, 255) } });
             if (Click(btnR)) { RunScan(); _appScreen = AppScreen.Results; }
             iy += 52;
-
-            // JSON paste toggle
-            if (TopBtn(new Rect(card.x + 20, iy, 200, 26), _showJsonInput ? "▲  Hide JSON Import" : "▼  Import from JSON"))
-            { _showJsonInput = !_showJsonInput; Repaint(); }
-            iy += 34;
-
-            if (_showJsonInput)
-            {
-                GUI.Label(new Rect(card.x + 20, iy, cw - 40, 14),
-                    "Paste expected config JSON — tool will compare against project:",
-                    new GUIStyle(_sMuted) { fontSize = 10 }); iy += 18;
-
-                _jsonInput = EditorGUI.TextArea(new Rect(card.x + 20, iy, cw - 40, 100), _jsonInput);
-                iy += 108;
-
-                if (TopBtn(new Rect(card.x + 20, iy, 130, 26), "Import & Scan"))
-                { RunScanWithJson(_jsonInput); }
-            }
 
             // Footer
             float sy = card.y + ch - 28;
@@ -894,12 +872,10 @@ namespace GDChecklist
         //  SCANNER
         // ════════════════════════════════════════════════════════════════════════
 
-        private void RunScan() => RunScanWithJson(null);
-
-        private void RunScanWithJson(string json)
+        private void RunScan()
         {
             var config = SDKConfig.BuildScanConfig();
-            _scan = AssetScanner.Scan(Application.dataPath, json, config);
+            _scan = AssetScanner.Scan(Application.dataPath, null, config);
             // Append release + manual checks to same ScanResult
             GDChecklist.ReleaseScanner.AppendChecks(_scan, Application.dataPath);
             _confirmed.Clear();
