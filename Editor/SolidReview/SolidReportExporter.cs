@@ -94,6 +94,9 @@ namespace SolidAgent
                 string script   = ScriptPath();
                 string nodePath = FindNodeExecutable();
 
+                // Ensure docx is available — install into writable cache if needed
+                EnsureDocxInstalled(script, nodePath);
+
                 var psi = new ProcessStartInfo
                 {
                     FileName               = nodePath,
@@ -125,6 +128,93 @@ namespace SolidAgent
             {
                 if (File.Exists(jsonPath)) File.Delete(jsonPath);
             }
+        }
+
+        // Installs the docx npm package into Library/DocxGen/node_modules if not present.
+        // Library/ is writable and persistent across reimports — perfect for npm cache.
+        private static string _docxModulesPath = null;
+        private static void EnsureDocxInstalled(string scriptPath, string nodePath)
+        {
+            if (_docxModulesPath != null && Directory.Exists(_docxModulesPath)) return;
+
+            // Prefer bundled node_modules~ next to the script (committed to repo)
+            string scriptDir   = Path.GetDirectoryName(scriptPath);
+            string bundledPath = Path.Combine(scriptDir, "node_modules~");
+            if (Directory.Exists(Path.Combine(bundledPath, "docx")))
+            {
+                _docxModulesPath = bundledPath;
+                return;
+            }
+            // Also accept plain node_modules next to script
+            string plainBundled = Path.Combine(scriptDir, "node_modules");
+            if (Directory.Exists(Path.Combine(plainBundled, "docx")))
+            {
+                _docxModulesPath = plainBundled;
+                return;
+            }
+
+            // Not bundled — install into Library/DocxGen/ (writable, persistent)
+            string libraryDocxDir = Path.GetFullPath(
+                Path.Combine(Application.dataPath, "..", "Library", "DocxGen"));
+            string installedPath = Path.Combine(libraryDocxDir, "node_modules");
+
+            if (Directory.Exists(Path.Combine(installedPath, "docx")))
+            {
+                _docxModulesPath = installedPath;
+                return;
+            }
+
+            // Run npm install docx in Library/DocxGen/
+            Directory.CreateDirectory(libraryDocxDir);
+
+            string npmPath = FindNpmExecutable(nodePath);
+            var psi = new ProcessStartInfo
+            {
+                FileName               = npmPath,
+                Arguments              = "install docx --prefix .",
+                WorkingDirectory       = libraryDocxDir,
+                UseShellExecute        = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError  = true,
+                CreateNoWindow         = true,
+            };
+            // Inherit PATH so npm can find node
+            string pathEnv = System.Environment.GetEnvironmentVariable("PATH") ?? "";
+            psi.EnvironmentVariables["PATH"] = pathEnv + Path.PathSeparator +
+                "/usr/local/bin:/usr/bin:/opt/homebrew/bin:/opt/homebrew/opt/node/bin";
+
+            using (var proc = Process.Start(psi))
+            {
+                string stdout = proc.StandardOutput.ReadToEnd();
+                string stderr = proc.StandardError.ReadToEnd();
+                proc.WaitForExit();
+                if (proc.ExitCode != 0 || !Directory.Exists(Path.Combine(installedPath, "docx")))
+                    throw new Exception(
+                        $"Failed to install docx npm package.\n{stderr}\n{stdout}\n" +
+                        "Make sure Node.js and npm are installed: https://nodejs.org");
+            }
+
+            _docxModulesPath = installedPath;
+        }
+
+        private static string FindNpmExecutable(string nodePath)
+        {
+            // npm lives in the same bin directory as node
+            string nodeDir = Path.GetDirectoryName(nodePath);
+            string npmInSameDir = Path.Combine(nodeDir, "npm");
+            if (File.Exists(npmInSameDir)) return npmInSameDir;
+            string npmExe = npmInSameDir + ".cmd"; // Windows
+            if (File.Exists(npmExe)) return npmExe;
+
+            // Fallback: common locations
+            string[] candidates = {
+                "/usr/local/bin/npm", "/usr/bin/npm",
+                "/opt/homebrew/bin/npm", "/opt/homebrew/opt/node/bin/npm",
+            };
+            foreach (var c in candidates)
+                if (File.Exists(c)) return c;
+
+            return "npm"; // last resort
         }
 
         private static string _cachedNodePath = null;

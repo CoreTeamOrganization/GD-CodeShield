@@ -10,23 +10,29 @@
 const path = require("path");
 const fs   = require("fs");
 
-// docx is bundled alongside this script.
-// Unity ignores node_modules~ (tilde suffix). Node resolves it fine via explicit path.
+// Locate the docx package. Checked in order:
+// 1. node_modules~/ next to this script (bundled, Unity-safe tilde name)
+// 2. node_modules/ next to this script (plain bundled)
+// 3. Library/DocxGen/node_modules/ (auto-installed by SolidReportExporter.cs)
 function loadDocx() {
-  // Try node_modules~ first (Unity-safe name)
-  const tildePath = path.join(__dirname, "node_modules~", "docx");
-  if (fs.existsSync(tildePath)) return require(tildePath);
+  const candidates = [
+    path.join(__dirname, "node_modules~", "docx"),
+    path.join(__dirname, "node_modules", "docx"),
+    // Walk up to find Library/DocxGen relative to the package cache path
+    // __dirname = …/Library/PackageCache/com.gamedistrict.codeshield@xxx/Editor/SolidReview/DocxGen
+    // Library   = …/Library/
+    path.join(__dirname, "..", "..", "..", "..", "..", "DocxGen", "node_modules", "docx"),
+  ];
 
-  // Fallback: plain node_modules (in case git renamed it back)
-  const plainPath = path.join(__dirname, "node_modules", "docx");
-  if (fs.existsSync(plainPath)) return require(plainPath);
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return require(p);
+  }
 
-  // Nothing found — give a clear actionable error
   throw new Error(
-    "Cannot find bundled 'docx' package.\n" +
-    "Expected at: " + tildePath + "\n" +
-    "Make sure the node_modules~ folder was committed to the Git repo and is present next to solid_report.js.\n" +
-    "Run: cd DocxGen && npm install    to reinstall it."
+    "Cannot find docx package.\n" +
+    "Checked:\n" + candidates.join("\n") + "\n\n" +
+    "Fix: click Export again — it will run 'npm install docx' automatically.\n" +
+    "Or run manually: cd \"" + __dirname + "\" && npm install docx"
   );
 }
 
