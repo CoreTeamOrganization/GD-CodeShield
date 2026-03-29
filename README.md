@@ -11,7 +11,7 @@ GD CodeShield is Game District's internal Unity editor toolkit that catches code
 In Unity: `Window → Package Manager → + → Add package from git URL`
 
 ```
-https://github.com/CoreTeamOrganization/GD-CodeShield.git
+https://github.com/GameDistrict/gd-codeshield.git#2.0.0
 ```
 
 **Requirements:**
@@ -75,10 +75,12 @@ With a Claude API key set, each violation gets a **Generate Fix** button:
 
 > Cost confirmation is shown before every API call — no surprise charges.
 
-### PDF Export
+### Word Doc Export
 
-- **Project PDF** — full summary report across all scanned files, matching the GD DriveToDeliver format
-- **File PDF** — per-file detailed report you can share directly with a developer
+- **Project Report** — full summary report across all scanned files with scores, principle ratings, and violation breakdown
+- **File Report** — per-file detailed report matching the GD SOLID Review format: Scores at a Glance table, per-principle problem breakdown, What to Fix table, and priority list — ready to share directly with a developer
+
+> Requires Node.js installed on the machine. The `docx` package is bundled inside the tool — no `npm install` needed.
 
 ### Settings
 
@@ -182,6 +184,15 @@ The hub (`Tools → GD CodeShield`) is a fixed 640×420 launcher window:
 ---
 
 ## Changelog
+
+### [1.0.7]
+- **Word Doc export replaces PDF export** — reports now generate `.docx` files matching the GD SOLID Review format exactly (dark theme, GD yellow headings, proper tables — no coordinate math, no overlapping text)
+- Per-file report: Scores at a Glance table, per-principle problem breakdown with full description and evidence, What to Fix table with detailed guidance, and a priority page sorted by severity
+- Project summary report: stats row, overall score, principle cards, violation breakdown page
+- `docx` npm package bundled inside `DocxGen/node_modules/` — no global install required on developer machines
+- Node.js executable resolved via explicit path search (nvm, Homebrew, `/usr/local/bin`) — fixes export failures when Unity launches without a full shell PATH
+- Fix export error messages now word-wrap in the UI so the full error is always readable
+- **Folder picker scroll fixed** — file browser no longer shows a massive empty scroll area; content height calculated dynamically from actual folder tree
 
 ### [2.0.0]
 - **GD Checklist completely overhauled** — merged SDK key validation with full release checklist
