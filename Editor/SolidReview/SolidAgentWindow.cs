@@ -1,5 +1,6 @@
 // Editor/SolidAgentWindow.cs  —  SOLID Review  —  Tools → SOLID Review
 
+using System;
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -18,14 +19,16 @@ namespace SolidAgent
         private Screen _screen = Screen.Home;
 
         private List<FileAnalysisResult>           _results   = new();
-        private Dictionary<string, GeneratedFix>   _fixes     = new();
-        private Dictionary<string, ReviewDecision> _decisions = new();
+        private Dictionary<string, GeneratedFix>   _fixes      = new();
+        private Dictionary<string, ReviewDecision> _decisions  = new();
+        private Dictionary<string, string>         _fixErrors  = new();  // key → error message
         private SolidReport                        _report    = null;
 
         private string _activeId          = null; // "FilePath||ViolationId"
         private int    _activeTab         = 0;
         private bool   _isFixing          = false;
         private string _statusMsg         = "";
+        private double _fixStartTime      = 0;   // EditorApplication.timeSinceStartup when fix started
         private float  _scanProgress      = 0f;
         private RegressionReport _lastRegression;
 
@@ -39,8 +42,13 @@ namespace SolidAgent
 
         // ── Settings ─────────────────────────────────────────────────────────────
         private string _apiKey    = null;
-        private string _scanRoot  = "";   // empty = whole Assets folder
-        private bool   _showSettings = false;
+        private bool   _showSettings   = false;
+        // Multi-select folder scan — empty set = whole Assets folder
+        private HashSet<string>  _scanRoots        = new HashSet<string>();
+        private HashSet<string>  _expandedFolders  = new HashSet<string>();
+        private bool             _showFolderPicker = false;
+        private Vector2 _folderPickerScroll;
+        private float   _folderTreeContentH = 0f;
 
         private string ApiKey
         {
@@ -48,9 +56,20 @@ namespace SolidAgent
             set { _apiKey = value ?? ""; EditorPrefs.SetString("SolidAgent_ApiKey", _apiKey); }
         }
 
-        // ── Scroll ───────────────────────────────────────────────────────────────
+        // ── Embedded Claude Code Terminal ─────────────────────────────────────────
+        private System.Diagnostics.Process _claudeProcess = null;
+        private System.Text.StringBuilder  _terminalOutput = new System.Text.StringBuilder();
+        private readonly object            _terminalLock   = new object();
+        private bool                       _terminalRunning = false;
+        private bool                       _terminalDone    = false;
+        private Vector2                    _terminalScroll;
+        private string                     _terminalInput  = "";  // user can type input
+        private bool                       _terminalScrollToBottom = false;
+
+
         private Vector2 _sidebarScroll;
         private Vector2 _mainScroll;
+        private float   _mainScrollContentH = 4800f; // grows as content is measured
 
         // ── Palette — Game District Logo theme ───────────────────────────────────
         // Source: logo bg #3A3A3A charcoal · bolt+text #FFD300 yellow · white wordmark
@@ -97,12 +116,23 @@ namespace SolidAgent
         private void OnEnable()
         {
             _stylesReady = false;
-            _scanRoot    = EditorPrefs.GetString("SolidAgent_ScanRoot", "");
+            _scanRoots   = new HashSet<string>();  // never persisted — select fresh each session
+
+            // Always reset to Home when window opens or package reloads.
+            // Unity serializes EditorWindow state across domain reloads, so
+            // _screen can be Results/Detail with empty _results after a package swap.
+            if (_results == null || _results.Count == 0)
+            {
+                _screen      = Screen.Home;
+                _activeId    = null;
+                _statusMsg   = "";
+                _isFixing    = false;
+            }
         }
 
         private void OnDisable()
         {
-            EditorPrefs.SetString("SolidAgent_ScanRoot", _scanRoot ?? "");
+            // _scanRoots intentionally not persisted — cleared each session
         }
 
         // ════════════════════════════════════════════════════════════════════════
@@ -203,10 +233,19 @@ namespace SolidAgent
             float cx = body.x + body.width / 2f;
             float cy = body.y + body.height / 2f;
             bool hasKey    = !string.IsNullOrEmpty(ApiKey);
-            bool hasFolder = !string.IsNullOrEmpty(_scanRoot);
+            bool hasFolder = _scanRoots.Count > 0;
 
-            // Card height grows if no API key
+            // Card height grows if no API key or folder picker is open
             float cw = 460f, ch = hasKey ? 330f : 430f;
+            if (_showFolderPicker) ch += 220f;
+            // Add height for top-level chips only
+            if (_scanRoots.Count > 0)
+            {
+                var sorted2   = _scanRoots.OrderBy(p => p).ToList();
+                int topCount  = sorted2.Count(p =>
+                    !sorted2.Any(o => o != p && (p.StartsWith(o + "/") || p.StartsWith(o + "\\"))));
+                ch += topCount * 26f + 28f;
+            }
             Bg(new Rect(cx - cw/2f - 5, cy - ch/2f - 5, cw + 10, ch + 10), C_ACCENT);
 
             var card = new Rect(cx - cw/2f, cy - ch/2f, cw, ch);
@@ -233,10 +272,12 @@ namespace SolidAgent
                     normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.65f) } });
             iy += 16;
 
-            // Folder display box
-            string displayPath = hasFolder
-                ? _scanRoot.Replace(Application.dataPath, "Assets")
-                : "All Assets  (entire project)";
+            // Current selection display
+            string displayPath = !hasFolder
+                ? "All Assets  (entire project)"
+                : _scanRoots.Count == 1
+                    ? _scanRoots.First().Replace(Application.dataPath, "Assets")
+                    : $"{_scanRoots.Count} folders selected";
 
             Bg(new Rect(card.x + 20, iy, cw - 40, 30), C_SURF2);
             Outline(new Rect(card.x + 20, iy, cw - 40, 30),
@@ -247,27 +288,226 @@ namespace SolidAgent
                 new GUIStyle(_sMuted) { fontSize = 10,
                     normal = { textColor = hasFolder ? C_ACCENT : C_MUTED } });
 
-            // Select Folder button
-            if (Btn(new Rect(card.x + cw - 118, iy + 4, 96, 22), "Select Folder", C_ACCENT))
+            // Toggle folder picker
+            string btnLabel = _showFolderPicker ? "▲  Close" : "▼  Choose";
+            if (Btn(new Rect(card.x + cw - 102, iy + 4, 80, 22), btnLabel, C_ACCENT))
             {
-                string picked = EditorUtility.OpenFolderPanel("Select folder to scan", Application.dataPath, "");
-                if (!string.IsNullOrEmpty(picked))
-                {
-                    if (picked.StartsWith(Application.dataPath))
-                        _scanRoot = picked;
-                    else
-                        _statusMsg = "⚠  Folder must be inside Assets.";
-                }
+                _showFolderPicker = !_showFolderPicker;
+                if (_showFolderPicker) _folderTreeContentH = 0f; // recalculate on first open
             }
-            iy += 30;
+            iy += 34;
 
-            // Reset link — only show when folder is selected
+            // Inline folder tree
+            if (_showFolderPicker)
+            {
+                // Warning banner
+                Bg(new Rect(card.x + 20, iy, cw - 40, 24),
+                   new Color(C_YELLOW.r, C_YELLOW.g, C_YELLOW.b, 0.08f));
+                Bg(new Rect(card.x + 20, iy, 3, 24), C_YELLOW);
+                GUI.Label(new Rect(card.x + 30, iy + 5, cw - 44, 14),
+                    "⚠  Select your own scripts only — avoid third-party SDK folders",
+                    new GUIStyle(_sMuted) { fontSize = 8,
+                        normal = { textColor = new Color(C_YELLOW.r, C_YELLOW.g, C_YELLOW.b, 0.85f) } });
+                iy += 26;
+
+                float treeH = 160f;
+                Bg(new Rect(card.x + 20, iy, cw - 40, treeH), C_SURF2);
+                Outline(new Rect(card.x + 20, iy, cw - 40, treeH),
+                    new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f));
+
+                _folderPickerScroll = GUI.BeginScrollView(
+                    new Rect(card.x + 20, iy, cw - 40, treeH),
+                    _folderPickerScroll,
+                    new Rect(0, 0, cw - 58, _folderTreeContentH > 0 ? _folderTreeContentH : treeH));
+
+                var knownSdks = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "AppMetrica","AppLovin","MaxSdk","Firebase","Adjust","AppsFlyer",
+                    "IronSource","GameAnalytics","Chartboost","Vungle","UnityAds",
+                    "Metica","AdMob","GoogleMobileAds","Plugins","ThirdParty","SDK","Sdk","Samples"
+                };
+
+                float ry = 4;
+
+                // "All Assets" row — checking this clears all selections
+                bool allSel = _scanRoots.Count == 0;
+                if (allSel) Bg(new Rect(0, ry, cw - 58, 20), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.1f));
+                // Checkbox
+                Bg(new Rect(10, ry + 3, 14, 14), allSel ? C_ACCENT : C_SURF);
+                Outline(new Rect(10, ry + 3, 14, 14), allSel ? C_ACCENT : C_BORDER);
+                if (allSel) GUI.Label(new Rect(10, ry + 1, 14, 16), "✓",
+                    new GUIStyle(_sMuted) { fontSize = 9, alignment = TextAnchor.MiddleCenter,
+                        normal = { textColor = Color.black } });
+                GUI.Label(new Rect(30, ry + 3, cw - 88, 14),
+                    "All Assets  (entire project)",
+                    new GUIStyle(_sMuted) { fontSize = 10,
+                        normal = { textColor = allSel ? C_ACCENT : C_TEXT } });
+                if (Click(new Rect(0, ry, cw - 58, 20)))
+                    _scanRoots.Clear();
+                ry += 22;
+
+                // Recursive tree — draw folder node helper inline
+                System.Action<string, int> drawFolder = null;
+                drawFolder = (dirPath, depth) =>
+                {
+                    string fname     = Path.GetFileName(dirPath);
+                    bool isSdk       = knownSdks.Contains(fname);
+                    bool checked_    = _scanRoots.Contains(dirPath);
+                    bool expanded    = _expandedFolders.Contains(dirPath);
+                    bool hasChildren = Directory.GetDirectories(dirPath).Length > 0;
+
+                    float indent  = 10 + depth * 16f;
+                    float rowY    = ry;   // capture before ry advances
+                    float rowW    = cw - 58;
+                    float rowH    = 22f;
+
+                    // Row highlight
+                    if (checked_)
+                        Bg(new Rect(0, rowY, rowW, rowH),
+                           new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.12f));
+
+                    // ── Expand arrow (left zone) — click toggles expand only ──────
+                    float arrowX = indent;
+                    if (hasChildren)
+                    {
+                        GUI.Label(new Rect(arrowX, rowY + 4, 14, 14),
+                            expanded ? "▼" : "▶",
+                            new GUIStyle(_sMuted) { fontSize = 8,
+                                alignment = TextAnchor.MiddleCenter,
+                                normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.7f) } });
+                    }
+
+                    // ── Checkbox ─────────────────────────────────────────────────
+                    float cbx = indent + 16;
+                    Bg(new Rect(cbx, rowY + 4, 13, 13), checked_ ? C_ACCENT : C_SURF2);
+                    Outline(new Rect(cbx, rowY + 4, 13, 13),
+                        checked_ ? C_ACCENT : new Color(C_BORDER.r, C_BORDER.g, C_BORDER.b, 0.8f));
+                    if (checked_)
+                        GUI.Label(new Rect(cbx - 1, rowY + 2, 15, 15), "✓",
+                            new GUIStyle(_sMuted) { fontSize = 9,
+                                alignment = TextAnchor.MiddleCenter,
+                                normal = { textColor = Color.black } });
+
+                    // ── Label ─────────────────────────────────────────────────────
+                    Color col   = isSdk ? C_YELLOW : (checked_ ? C_ACCENT : C_TEXT);
+                    string lbl  = fname + (isSdk ? "  ⚠" : "/");
+                    GUI.Label(new Rect(cbx + 17, rowY + 4, rowW - cbx - 20, 14), lbl,
+                        new GUIStyle(_sMuted) { fontSize = depth == 0 ? 10 : 9,
+                            normal = { textColor = col } });
+
+                    // ── Click handling ────────────────────────────────────────────
+                    // Arrow zone — expand/collapse only
+                    if (hasChildren && Click(new Rect(arrowX, rowY, 16, rowH)))
+                    {
+                        if (expanded) _expandedFolders.Remove(dirPath);
+                        else          _expandedFolders.Add(dirPath);
+                    }
+                    // Rest of row (checkbox + label) — toggle selection + all children
+                    else if (Click(new Rect(cbx, rowY, rowW - cbx, rowH)))
+                    {
+                        if (checked_)
+                        {
+                            // Deselect this folder and all its descendants
+                            var toRemove = _scanRoots
+                                .Where(p => p == dirPath || p.StartsWith(dirPath + "/") || p.StartsWith(dirPath + "\\"))
+                                .ToList();
+                            foreach (var p in toRemove) _scanRoots.Remove(p);
+                        }
+                        else
+                        {
+                            // Select this folder + auto-select all subfolders recursively
+                            _scanRoots.Add(dirPath);
+                            try
+                            {
+                                foreach (var sub in Directory.GetDirectories(dirPath, "*",
+                                             SearchOption.AllDirectories))
+                                    _scanRoots.Add(sub);
+                                // Also auto-expand so user can see and deselect children
+                                _expandedFolders.Add(dirPath);
+                            }
+                            catch { }
+                        }
+                    }
+
+                    ry += rowH;
+
+                    // Recurse into children if expanded
+                    if (expanded && hasChildren)
+                    {
+                        try
+                        {
+                            foreach (var sub in Directory.GetDirectories(dirPath)
+                                         .OrderBy(d => Path.GetFileName(d)))
+                                drawFolder(sub, depth + 1);
+                        }
+                        catch { }
+                    }
+                };
+
+                try
+                {
+                    foreach (var dir in Directory.GetDirectories(Application.dataPath)
+                                 .OrderBy(d => Path.GetFileName(d)))
+                        drawFolder(dir, 0);
+                }
+                catch { }
+
+                GUI.EndScrollView();
+                // Store the actual rendered height so next frame the scroll rect is exact
+                _folderTreeContentH = ry + 4f;
+                iy += treeH + 4;
+            }
+
+            // Show selected folders summary + warnings
             if (hasFolder)
             {
-                if (Btn(new Rect(card.x + 20, iy, 130, 18), "✕  Reset to All Assets", C_MUTED))
-                    _scanRoot = "";
+                var warnSdks = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "AppMetrica","AppLovin","MaxSdk","Firebase","Adjust","AppsFlyer",
+                    "IronSource","GameAnalytics","Chartboost","Vungle","UnityAds",
+                    "Metica","AdMob","GoogleMobileAds","Plugins","ThirdParty","SDK","Sdk","Samples"
+                };
+
+                // Only show TOP-LEVEL selected folders as chips.
+                // A folder is top-level if no ancestor of it is also selected.
+                var sorted    = _scanRoots.OrderBy(p => p).ToList();
+                var topLevel  = sorted.Where(p =>
+                    !sorted.Any(other => other != p &&
+                        (p.StartsWith(other + "/") || p.StartsWith(other + "\\"))
+                    )).ToList();
+
+                foreach (var sel in topLevel)
+                {
+                    string sname   = Path.GetFileName(sel.TrimEnd('/', '\\'));
+                    bool isBad     = warnSdks.Contains(sname);
+                    Color cc       = isBad ? C_RED : C_GREEN;
+                    // Count how many total folders this selection covers
+                    int childCount = _scanRoots.Count(p => p != sel &&
+                        (p.StartsWith(sel + "/") || p.StartsWith(sel + "\\")));
+                    string countLabel = childCount > 0 ? $"  (+{childCount} subfolders)" : "";
+
+                    Bg(new Rect(card.x + 20, iy, cw - 40, 22), new Color(cc.r, cc.g, cc.b, 0.06f));
+                    Outline(new Rect(card.x + 20, iy, cw - 40, 22), new Color(cc.r, cc.g, cc.b, 0.3f));
+                    Bg(new Rect(card.x + 20, iy, 3, 22), cc);
+                    GUI.Label(new Rect(card.x + 30, iy + 4, cw - 100, 14),
+                        (isBad ? "⚠  " : "✓  ") + sel.Replace(Application.dataPath, "Assets") + countLabel,
+                        new GUIStyle(_sMuted) { fontSize = 9,
+                            normal = { textColor = new Color(cc.r, cc.g, cc.b, 0.9f) } });
+                    // Remove button removes top folder + all its descendants
+                    if (Btn(new Rect(card.x + cw - 54, iy + 2, 32, 18), "✕", C_SURF2))
+                    {
+                        var toRemove = _scanRoots
+                            .Where(p => p == sel || p.StartsWith(sel + "/") || p.StartsWith(sel + "\\"))
+                            .ToList();
+                        foreach (var p in toRemove) _scanRoots.Remove(p);
+                    }
+                    iy += 24;
+                }
+
+                if (Btn(new Rect(card.x + 20, iy, 118, 18), "✕  Clear all", C_MUTED))
+                    _scanRoots.Clear();
             }
-            iy += hasFolder ? 26 : 14;
+            iy += hasFolder ? 26 : 10;
 
             // Yellow divider
             Bg(new Rect(card.x + 20, iy, cw - 40, 1),
@@ -473,7 +713,7 @@ namespace SolidAgent
                 // Download PDF button
                 HRule(new Rect(r.x + 8, ry, r.width - 16, 1), C_BORDER);
                 ry += 10;
-                if (Btn(new Rect(r.x + 10, ry, r.width - 20, 32), "⬇  Download PDF Report", C_ACCENT))
+                if (Btn(new Rect(r.x + 10, ry, r.width - 20, 32), "⬇  Download Word Report", C_ACCENT))
                     ExportPDF();
             }
 
@@ -537,7 +777,7 @@ namespace SolidAgent
 
                     if (Click(new Rect(0, y, r.width, 52)))
                     {
-                        _activeId = key; _activeTab = 0; _lastRegression = null;
+                        _activeId = key; _activeTab = 0; _lastRegression = null; _mainScrollContentH = 4800f; _mainScroll = Vector2.zero;
                         _screen = Screen.Detail;
                         _showCostPrompt = false; _pendingFixKey = null; // dismiss prompt
                         Repaint();
@@ -595,7 +835,7 @@ namespace SolidAgent
             }
 
             // ── Header bar ──────────────────────────────────────────────────────
-            float hh = 58f;
+            float hh = 72f;   // taller header — title + file row without overlap
             Bg(new Rect(r.x, r.y, r.width, hh), C_SURF);
             HRule(new Rect(r.x, r.y + hh - 1, r.width, 1), C_BORDER);
 
@@ -603,60 +843,126 @@ namespace SolidAgent
             DrawPill(new Rect(r.x + 16, r.y + 10, 38, 18), v.Principle.ToString(), PrinColor(v.Principle));
             DrawPill(new Rect(r.x + 60, r.y + 10, 56, 18), v.Severity.ToString(), SevColor(v.Severity));
 
-            // Title
-            GUI.Label(new Rect(r.x + 16, r.y + 30, r.width - 200, 20), v.Title, _sBody);
+            // Title — second row, below badges
+            GUI.Label(new Rect(r.x + 16, r.y + 32, r.width - 110, 20), v.Title, _sBody);
 
-            // File + line
-            GUI.Label(new Rect(r.x + 16 + (r.width - 200), r.y + 34, 180, 16),
-                v.Location.FileName + "  :" + v.Location.StartLine,
-                new GUIStyle(_sMuted) { alignment = TextAnchor.MiddleRight, fontSize = 10 });
+            // File + line row — third row at bottom of header
+            GUI.Label(new Rect(r.x + 16, r.y + 54, 40, 14), "FILE",
+                new GUIStyle(_sMuted) { fontSize = 8, fontStyle = FontStyle.Bold,
+                    normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.55f) } });
+            GUI.Label(new Rect(r.x + 58, r.y + 54, r.width - 180, 14),
+                v.Location.FileName,
+                new GUIStyle(_sMuted) { fontSize = 9,
+                    normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.85f) } });
+            // Line pill — right side of file row
+            DrawPill(new Rect(r.x + r.width - 88, r.y + 51, 76, 16),
+                "line " + v.Location.StartLine, C_ACCENT);
 
             // ── Processing overlay — shown prominently when fixing ────────────────
             if (_isFixing)
             {
                 float oy = r.y + hh + 34;
                 float oh = r.height - hh - 34 - 54;
-                // Dim background
-                Bg(new Rect(r.x, oy, r.width, oh), new Color(0, 0, 0, 0.55f));
+                Bg(new Rect(r.x, oy, r.width, oh), new Color(0, 0, 0, 0.6f));
 
-                // Centered status card
-                float cw2 = 360f, ch2 = 90f;
-                float ccx = r.x + r.width  / 2f - cw2 / 2f;
-                float ccy = oy  + oh / 2f - ch2 / 2f;
+                float cw2 = 420f, ch2 = 180f;
+                float ccx = r.x + r.width / 2f - cw2 / 2f;
+                float ccy = oy + oh / 2f - ch2 / 2f;
                 Bg(new Rect(ccx, ccy, cw2, ch2), C_SURF);
                 Outline(new Rect(ccx, ccy, cw2, ch2), C_ACCENT);
+                // Yellow top stripe on card
+                Bg(new Rect(ccx, ccy, cw2, 3), C_ACCENT);
 
-                // Animated dots
                 int dots = (int)(EditorApplication.timeSinceStartup * 2) % 4;
                 string ellipsis = new string('.', dots);
 
-                GUI.Label(new Rect(ccx, ccy + 18, cw2, 24), _statusMsg,
+                // Elapsed time
+                double elapsed = EditorApplication.timeSinceStartup - _fixStartTime;
+                string timeStr = elapsed < 60
+                    ? $"{(int)elapsed}s"
+                    : $"{(int)(elapsed/60)}m {(int)(elapsed%60)}s";
+
+                // Title
+                GUI.Label(new Rect(ccx, ccy + 14, cw2, 22), "Generating Fix" + ellipsis,
                     new GUIStyle(_sBody)
                     {
-                        alignment = TextAnchor.MiddleCenter,
-                        fontSize  = 13,
-                        fontStyle = FontStyle.Bold,
-                        normal    = { textColor = C_TEXT }
+                        alignment = TextAnchor.MiddleCenter, fontSize = 13,
+                        fontStyle = FontStyle.Bold, normal = { textColor = C_ACCENT }
                     });
-                GUI.Label(new Rect(ccx, ccy + 50, cw2, 18),
-                    "Please wait" + ellipsis,
-                    new GUIStyle(_sMuted) { alignment = TextAnchor.MiddleCenter });
 
-                Repaint(); // keep animating dots
+                // Elapsed
+                GUI.Label(new Rect(ccx, ccy + 36, cw2, 16), timeStr,
+                    new GUIStyle(_sMuted) { alignment = TextAnchor.MiddleCenter, fontSize = 10,
+                        normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.6f) } });
+
+                // Step indicators
+                string[] steps = {
+                    "Connect to API",
+                    "Read source file",
+                    "Analyse violations",
+                    "Claude reading project files",
+                    "Generating fix",
+                    "Contract check"
+                };
+                int currentStep =
+                    _statusMsg.Contains("Connecting")              ? 0 :
+                    _statusMsg.Contains("Reading source")          ? 1 :
+                    _statusMsg.Contains("Analysing")               ? 2 :
+                    _statusMsg.Contains("Reading") || _statusMsg.Contains("Exploring") ? 3 :
+                    _statusMsg.Contains("Generating")              ? 4 :
+                    _statusMsg.Contains("contract")                ? 5 : 3;
+
+                float sy = ccy + 60;
+                for (int si = 0; si < steps.Length; si++)
+                {
+                    bool done    = si < currentStep;
+                    bool active  = si == currentStep;
+                    Color col    = done ? C_GREEN : active ? C_ACCENT : new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.3f);
+                    string icon  = done ? "✓" : active ? "▶" : "○";
+
+                    // Highlight active row
+                    if (active)
+                        Bg(new Rect(ccx + 12, sy, cw2 - 24, 20),
+                           new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.06f));
+
+                    GUI.Label(new Rect(ccx + 18, sy + 2, 16, 16), icon,
+                        new GUIStyle(_sMuted) { fontSize = 9, normal = { textColor = col } });
+                    GUI.Label(new Rect(ccx + 36, sy + 2, cw2 - 50, 16),
+                        active ? steps[si] + ellipsis : steps[si],
+                        new GUIStyle(_sMuted) { fontSize = 9, normal = { textColor = col } });
+                    sy += 22;
+                }
+
+                // Bottom note — only show on slow step
+                if (currentStep == 3 && elapsed > 4)
+                {
+                    GUI.Label(new Rect(ccx + 12, ccy + ch2 - 22, cw2 - 24, 16),
+                        "Claude is reading the full file — larger files take longer.",
+                        new GUIStyle(_sMuted) { alignment = TextAnchor.MiddleCenter, fontSize = 8,
+                            normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.45f) } });
+                }
+
+                Repaint();
             }
 
-            // Subtle status line in header (always visible)
+            // Status line — single line normally, expands to show full error
             if (!string.IsNullOrEmpty(_statusMsg) && !_isFixing)
-                GUI.Label(new Rect(r.x + 124, r.y + 10, r.width - 140, 18),
-                    _statusMsg, new GUIStyle(_sMuted)
-                    {
-                        fontSize = 10,
-                        normal   = { textColor = _statusMsg.StartsWith("✓") ? C_GREEN :
-                                                  _statusMsg.StartsWith("✗") ? C_RED : C_MUTED }
-                    });
+            {
+                bool isError = _statusMsg.StartsWith("✗");
+                float msgH   = isError ? 52f : 18f;
+                float msgY   = isError ? r.y + 4f : r.y + 10f;
+                var msgStyle = new GUIStyle(_sMuted)
+                {
+                    fontSize  = isError ? 9 : 10,
+                    wordWrap  = true,
+                    normal    = { textColor = _statusMsg.StartsWith("✓") ? C_GREEN :
+                                              isError ? C_RED : C_MUTED }
+                };
+                GUI.Label(new Rect(r.x + 124, msgY, r.width - 140, msgH), _statusMsg, msgStyle);
+            }
 
             // ── Tabs ────────────────────────────────────────────────────────────
-            string[] tabs = { "Violation", "Proposed Fix", "Regression" };
+            string[] tabs = { "Violation", "Proposed Fix", "Claude Code" };
             float ty = r.y + hh;
             Bg(new Rect(r.x, ty, r.width, 34), C_SURF);
 
@@ -673,7 +979,7 @@ namespace SolidAgent
                 else
                 {
                     GUI.Label(tr, tabs[i], new GUIStyle(_sMuted) { alignment = TextAnchor.MiddleCenter });
-                    if (Click(tr)) { _activeTab = i; Repaint(); }
+                    if (Click(tr)) { _activeTab = i; _mainScrollContentH = 4800f; _mainScroll = Vector2.zero; Repaint(); }
                 }
             }
             HRule(new Rect(r.x, ty + 33, r.width, 1), C_BORDER);
@@ -703,13 +1009,21 @@ namespace SolidAgent
             float ch   = r.height - hh - 34 - disclaimerH - 54;
             _mainScroll = GUI.BeginScrollView(
                 new Rect(r.x, cy2, r.width, ch), _mainScroll,
-                new Rect(0, 0, r.width - 16, 2400));
+                new Rect(0, 0, r.width - 16, _mainScrollContentH));
 
             float py = 16; float pw = r.width - 48; float px = 24;
 
             if (_activeTab == 0) DrawViolationTab(v, px, ref py, pw);
             if (_activeTab == 1) DrawFixTab(v, px, ref py, pw);
-            if (_activeTab == 2) DrawRegressionTab(px, ref py, pw);
+            if (_activeTab == 2) DrawEmbeddedTerminal(px, ref py, pw);
+
+            // Update content height — add padding, never shrink below visible area
+            float measured = py + 40f;
+            if (measured > _mainScrollContentH || measured < _mainScrollContentH - 400f)
+            {
+                _mainScrollContentH = Mathf.Max(measured, ch + 100f);
+                Repaint();
+            }
 
             GUI.EndScrollView();
 
@@ -723,28 +1037,31 @@ namespace SolidAgent
 
         private void DrawViolationTab(Violation v, float x, ref float y, float w)
         {
-            // Description card
-            SecLabel(x, ref y, "Description");
+            // ── What the violation is ────────────────────────────────────────────
+            SecLabel(x, ref y, "What is wrong");
             DrawCard(x, ref y, w, v.Description, _sBody);
 
-            // Evidence chip
-            SecLabel(x, ref y, "Evidence");
-            float ew = w, eh = 30;
-            Bg(new Rect(x, y, ew, eh), C_SURF2);
-            Outline(new Rect(x, y, ew, eh), C_BORDER);
-            // Left accent strip
+            // ── Why it matters (evidence) ────────────────────────────────────────
+            SecLabel(x, ref y, "Evidence in code");
+            float eh = 36;
+            Bg(new Rect(x, y, w, eh), new Color(C_YELLOW.r, C_YELLOW.g, C_YELLOW.b, 0.06f));
+            Outline(new Rect(x, y, w, eh), new Color(C_YELLOW.r, C_YELLOW.g, C_YELLOW.b, 0.3f));
             Bg(new Rect(x, y, 3, eh), C_YELLOW);
-            GUI.Label(new Rect(x + 14, y + 7, ew - 20, 16), v.Evidence,
+            GUI.Label(new Rect(x + 16, y + 10, w - 24, 16), v.Evidence,
                 new GUIStyle(_sBody)
                 {
                     fontSize = 11,
-                    normal   = { textColor = new Color(C_YELLOW.r * 1.3f, C_YELLOW.g * 1.2f, C_YELLOW.b, 1f) }
+                    fontStyle = FontStyle.Bold,
+                    normal   = { textColor = new Color(C_YELLOW.r, C_YELLOW.g, C_YELLOW.b, 0.95f) }
                 });
             y += eh + 14;
 
-            // Code snippet
-            SecLabel(x, ref y, $"Affected Code  —  line {v.Location.StartLine}");
-            DrawCodeBlock(v.OriginalCode, x, ref y, w);
+            // ── Affected code with real file context ─────────────────────────────
+            // Show file name + exact line range so developer knows exactly where to look
+            int endLine = v.Location.StartLine + (v.OriginalCode?.Split('\n').Length ?? 1) - 1;
+            SecLabel(x, ref y,
+                $"Affected code  ·  {v.Location.FileName}  ·  line {v.Location.StartLine}–{endLine}");
+            DrawCodeBlock(v.OriginalCode, x, ref y, w, v.Location.StartLine);
         }
 
         // ════════════════════════════════════════════════════════════════════════
@@ -755,6 +1072,7 @@ namespace SolidAgent
         {
             string key    = MakeKey(v);
             bool   hasKey = !string.IsNullOrEmpty(ApiKey);
+            var    allViolationsInFile = GetFileViolations(v.Location.FilePath);
 
             if (!_fixes.TryGetValue(key, out var fix))
             {
@@ -785,18 +1103,129 @@ namespace SolidAgent
 
                 // Generate button — shows cost prompt first
                 SecLabel(x, ref y, "No fix generated yet");
-                GUI.Label(new Rect(x, y, w, 20),
-                    "Claude API will analyse this violation and generate a fix.", _sMuted);
-                y += 30;
 
-                GUI.enabled = !_isFixing;
-                if (Btn(new Rect(x, y, 152, 36), "⚡  Generate Fix", C_ACCENT))
+                // Show API error inline if one occurred
+                if (_fixErrors.TryGetValue(key, out var fixErr))
                 {
-                    _pendingFixKey  = key;
-                    _showCostPrompt = true;
+                    float errH = 72f;
+                    Bg(new Rect(x, y, w, errH), new Color(C_RED.r, C_RED.g, C_RED.b, 0.07f));
+                    Outline(new Rect(x, y, w, errH), new Color(C_RED.r, C_RED.g, C_RED.b, 0.4f));
+                    Bg(new Rect(x, y, 3, errH), C_RED);
+
+                    // Friendly message for common errors
+                    string friendly = fixErr;
+                    if (fixErr.Contains("429") || fixErr.ToLower().Contains("rate") || fixErr.ToLower().Contains("limit"))
+                        friendly = "API rate limit or usage quota reached — wait a moment then try again.";
+                    else if (fixErr.Contains("401") || fixErr.ToLower().Contains("auth") || fixErr.ToLower().Contains("key"))
+                        friendly = "Invalid API key — check your key in Settings.";
+                    else if (fixErr.Contains("503") || fixErr.ToLower().Contains("overload"))
+                        friendly = "Claude API is overloaded — try again in a few seconds.";
+
+                    GUI.Label(new Rect(x + 14, y + 8, w - 20, 16),
+                        "⚠  " + friendly,
+                        new GUIStyle(_sBody) { fontSize = 10, fontStyle = FontStyle.Bold,
+                            normal = { textColor = new Color(C_RED.r, C_RED.g, C_RED.b, 0.9f) } });
+                    GUI.Label(new Rect(x + 14, y + 28, w - 20, 14),
+                        "Technical detail: " + fixErr,
+                        new GUIStyle(_sMuted) { fontSize = 8 });
+
+                    // Retry button
+                    if (Btn(new Rect(x + 14, y + 46, 90, 22), "↺  Retry", C_ACCENT))
+                    {
+                        _fixErrors.Remove(key);
+                        _pendingFixKey  = key;
+                        _showCostPrompt = true;
+                    }
+                    y += errH + 10;
                 }
-                GUI.enabled = true;
-                y += 46;
+                else
+                {
+                    // Check if any violation is SRP — Generate Fix can't reliably handle it
+                    bool hasSrp = allViolationsInFile.Any(vl => vl.Principle == SolidPrinciple.SRP);
+
+                    if (hasSrp)
+                    {
+                        // SRP info card
+                        float warnH = 44f;
+                        Bg(new Rect(x, y, w, warnH), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.06f));
+                        Outline(new Rect(x, y, w, warnH), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f));
+                        Bg(new Rect(x, y, 3, warnH), C_ACCENT);
+                        GUI.Label(new Rect(x + 14, y + 7, w - 20, 16),
+                            "SRP fix requires creating new files — use Claude Code for best results",
+                            new GUIStyle(_sBody) { fontSize = 10, fontStyle = FontStyle.Bold,
+                                normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.95f) } });
+                        GUI.Label(new Rect(x + 14, y + 26, w - 20, 14),
+                            "Claude Code reads all project files before applying the fix.",
+                            new GUIStyle(_sMuted) { fontSize = 9 });
+                        y += warnH + 10;
+
+                        // Only show Claude Code options for SRP
+                        GUI.enabled = true;
+                        if (Btn(new Rect(x, y, 172, 36), "📋  Copy Prompt", C_ACCENT))
+                        {
+                            string prompt = BuildClaudeCodePrompt(v, allViolationsInFile);
+                            EditorGUIUtility.systemCopyBuffer = prompt;
+                            _statusMsg = "✓ Prompt copied — paste into Claude Code";
+                            Repaint();
+                        }
+                        if (Btn(new Rect(x + 180, y, 160, 36), "🚀  Run in Tool", C_GREEN))
+                            LaunchEmbeddedClaude(v, allViolationsInFile);
+                        y += 46;
+                    }
+                    else
+                    {
+                        // Non-SRP: Generate Fix works fine (single-file changes only)
+                        GUI.Label(new Rect(x, y, w, 20),
+                            "Generate Fix — single API call, fixes within this file only.", _sMuted);
+                        y += 28;
+
+                        GUI.enabled = !_isFixing;
+                        if (Btn(new Rect(x, y, 136, 36), "⚡  Generate Fix", C_ACCENT))
+                        {
+                            _pendingFixKey  = key;
+                            _showCostPrompt = true;
+                        }
+
+                        GUI.enabled = true;
+                        if (Btn(new Rect(x + 144, y, 148, 36), "📋  Copy Prompt", C_SURF2))
+                        {
+                            string prompt = BuildClaudeCodePrompt(v, allViolationsInFile);
+                            EditorGUIUtility.systemCopyBuffer = prompt;
+                            _statusMsg = "✓ Prompt copied — paste into Claude Code";
+                            Repaint();
+                        }
+                        if (Btn(new Rect(x + 300, y, 160, 36), "🚀  Open Claude Code", C_GREEN))
+                            OpenInClaudeCode(v, allViolationsInFile);
+                        y += 46;
+                    }
+
+                    // Explain all options
+                    Bg(new Rect(x, y, w, hasSrp ? 42f : 56f),
+                        new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.04f));
+                    Bg(new Rect(x, y, 3, hasSrp ? 42f : 56f),
+                        new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.4f));
+                    if (!hasSrp)
+                    {
+                        GUI.Label(new Rect(x + 12, y + 5, w - 20, 14),
+                            "⚡  Generate Fix  — quick AI fix via API.",
+                            new GUIStyle(_sMuted) { fontSize = 9 });
+                        GUI.Label(new Rect(x + 12, y + 21, w - 20, 14),
+                            "🚀  Run in Tool  — opens Claude Code with your project context.",
+                            new GUIStyle(_sMuted) { fontSize = 9 });
+                        y += 56;
+                    }
+                    else
+                    {
+                        GUI.Label(new Rect(x + 12, y + 5, w - 20, 14),
+                            "📋  Copy Prompt  — copy prompt to paste into Claude Code.",
+                            new GUIStyle(_sMuted) { fontSize = 9 });
+                        GUI.Label(new Rect(x + 12, y + 21, w - 20, 14),
+                            "🚀  Run in Tool  — opens Terminal and runs Claude Code in your project automatically.",
+                            new GUIStyle(_sMuted) { fontSize = 9 });
+                        y += 42;
+                    }
+
+                }
 
                 // ── Cost confirmation prompt ──────────────────────────────────────
                 if (_showCostPrompt && _pendingFixKey == key)
@@ -832,16 +1261,23 @@ namespace SolidAgent
             }
 
             // Summary card
-            SecLabel(x, ref y, "What Changes");
+            SecLabel(x, ref y, "What changes");
             DrawCard(x, ref y, w, fix.DiffSummary, _sBody);
 
             // Explanation
-            SecLabel(x, ref y, "Why This Is Correct");
+            SecLabel(x, ref y, "Why this is correct");
             var mutedBody = new GUIStyle(_sBody) { normal = { textColor = C_MUTED } };
             DrawCard(x, ref y, w, fix.Explanation, mutedBody);
 
-            // Fixed code
-            SecLabel(x, ref y, "Fixed Code");
+            // Fixed code — with clear FIXED label and green accent
+            SecLabel(x, ref y, "Fixed code  ·  review before applying");
+            // Green accent bar to distinguish from original code
+            Bg(new Rect(x, y, w, 24), new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.06f));
+            Bg(new Rect(x, y, 3, 24), C_GREEN);
+            GUI.Label(new Rect(x + 14, y + 5, 200, 14), "PROPOSED FIX",
+                new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
+                    normal = { textColor = new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.85f) } });
+            y += 24;
             DrawCodeBlock(fix.FixedCode, x, ref y, w);
 
             // ── Contract Check panel ─────────────────────────────────────────────
@@ -924,60 +1360,117 @@ namespace SolidAgent
 
                 y = y + panelH + 10;
 
-                // If fix splits into multiple files, note it
+                // Show new files with their full content for review
                 if (fix.NewFilesNeeded != null && fix.NewFilesNeeded.Count > 0)
                 {
-                    y += 4;
-                    GUI.Label(new Rect(x, y, w, 16),
-                        $"ℹ  Fix will create {fix.NewFilesNeeded.Count} new file(s): " +
-                        string.Join(", ", fix.NewFilesNeeded),
-                        new GUIStyle(_sMuted) { fontSize = 10,
-                            normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.8f) } });
-                    y += 20;
+                    y += 8;
+                    SecLabel(x, ref y, $"New files this fix will create  ({fix.NewFilesNeeded.Count})");
+
+                    foreach (var newFile in fix.NewFilesNeeded)
+                    {
+                        // File header bar
+                        Bg(new Rect(x, y, w, 26), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.08f));
+                        Outline(new Rect(x, y, w, 26), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f));
+                        Bg(new Rect(x, y, 3, 26), C_ACCENT);
+                        GUI.Label(new Rect(x + 14, y + 5, w - 20, 16), "NEW FILE:  " + newFile,
+                            new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
+                                normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.9f) } });
+                        y += 26;
+
+                        // Show content if available
+                        bool hasContent = fix.NewFileContents != null
+                            && fix.NewFileContents.TryGetValue(newFile, out var newContent)
+                            && !string.IsNullOrWhiteSpace(newContent);
+
+                        if (hasContent)
+                            DrawCodeBlock(fix.NewFileContents[newFile], x, ref y, w, 1);
+                        else
+                        {
+                            // No content — warn developer
+                            Bg(new Rect(x, y, w, 32), new Color(C_RED.r, C_RED.g, C_RED.b, 0.08f));
+                            Outline(new Rect(x, y, w, 32), new Color(C_RED.r, C_RED.g, C_RED.b, 0.3f));
+                            GUI.Label(new Rect(x + 12, y + 8, w - 24, 16),
+                                "⚠  Content for this file was not returned by Claude — applying may cause compile errors",
+                                new GUIStyle(_sMuted) { fontSize = 9,
+                                    normal = { textColor = new Color(C_RED.r, C_RED.g, C_RED.b, 0.9f) } });
+                            y += 38;
+                        }
+                    }
                 }
             }
         }
 
         // ════════════════════════════════════════════════════════════════════════
-        //  TAB: REGRESSION
+        //  TAB: APPLIED
         // ════════════════════════════════════════════════════════════════════════
 
         private void DrawRegressionTab(float x, ref float y, float w)
         {
-            if (_lastRegression == null)
+            string key = _activeId;
+            var dec = key != null ? _decisions.GetValueOrDefault(key) : ReviewDecision.None;
+
+            if (dec != ReviewDecision.Applied)
             {
-                GUI.Label(new Rect(x, y, w, 32),
-                    "Apply the fix to run regression tests. Results appear here.", _sMuted);
+                Bg(new Rect(x, y, w, 48), new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.06f));
+                Bg(new Rect(x, y, 3, 48), C_MUTED);
+                GUI.Label(new Rect(x + 14, y + 14, w - 20, 18),
+                    "Apply the fix first — this tab shows a summary after the fix is written to disk.",
+                    new GUIStyle(_sMuted) { fontSize = 10 });
+                y += 60;
                 return;
             }
 
-            SecLabel(x, ref y, "Test Results — Before vs After");
+            var v   = FindViolation(key);
+            var fix = _fixes.ContainsKey(key) ? _fixes[key] : null;
 
-            foreach (var t in _lastRegression.Tests)
+            // ── Green confirmation banner ─────────────────────────────────────
+            Bg(new Rect(x, y, w, 52), new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.06f));
+            Outline(new Rect(x, y, w, 52), new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.35f));
+            Bg(new Rect(x, y, 3, 52), C_GREEN);
+            GUI.Label(new Rect(x + 14, y + 8, w - 20, 18), "✓  Fix applied successfully",
+                new GUIStyle(_sBody) { fontStyle = FontStyle.Bold,
+                    normal = { textColor = C_GREEN } });
+            GUI.Label(new Rect(x + 14, y + 28, w - 20, 16),
+                "Unity will recompile automatically. Check the Console for any errors.",
+                new GUIStyle(_sMuted) { fontSize = 9 });
+            y += 62;
+
+            // ── What was written ──────────────────────────────────────────────
+            if (fix != null)
             {
-                Color bg  = t.Passed ? new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.06f)
-                                     : new Color(C_RED.r,   C_RED.g,   C_RED.b,   0.08f);
-                Color col = t.Passed ? C_GREEN : C_RED;
+                SecLabel(x, ref y, "Files written to disk");
 
-                Bg(new Rect(x, y, w, 32), bg);
-                Outline(new Rect(x, y, w, 32), C_BORDER);
-                Bg(new Rect(x, y, 3, 32), col);
+                // Main file
+                Bg(new Rect(x, y, w, 28), C_SURF2);
+                Outline(new Rect(x, y, w, 28), C_BORDER);
+                Bg(new Rect(x, y, 3, 28), C_GREEN);
+                GUI.Label(new Rect(x + 14, y + 7, w - 20, 14),
+                    "MODIFIED  —  " + (v?.Location.FileName ?? ""),
+                    new GUIStyle(_sBody) { fontSize = 9,
+                        normal = { textColor = new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.9f) } });
+                y += 32;
 
-                GUI.Label(new Rect(x + 12, y + 8, 16, 16), t.Passed ? "✓" : "✗",
-                    new GUIStyle(_sBody) { normal = { textColor = col } });
-                GUI.Label(new Rect(x + 32, y + 9, w * .5f, 14), t.Description, _sBody);
-                GUI.Label(new Rect(x + w * .55f, y + 9, w * .42f, 14),
-                    t.ExpectedOutput + " → " + t.ActualOutput, _sMuted);
-                y += 34;
+                // New files
+                foreach (var nf in fix.NewFilesNeeded)
+                {
+                    Bg(new Rect(x, y, w, 28), C_SURF2);
+                    Outline(new Rect(x, y, w, 28), C_BORDER);
+                    Bg(new Rect(x, y, 3, 28), C_ACCENT);
+                    GUI.Label(new Rect(x + 14, y + 7, w - 20, 14),
+                        "CREATED   —  " + nf,
+                        new GUIStyle(_sBody) { fontSize = 9,
+                            normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.9f) } });
+                    y += 32;
+                }
+
+                // What changed summary
+                if (!string.IsNullOrEmpty(fix.DiffSummary))
+                {
+                    y += 8;
+                    SecLabel(x, ref y, "What changed");
+                    DrawCard(x, ref y, w, fix.DiffSummary, _sBody);
+                }
             }
-
-            y += 10;
-            Color sc = _lastRegression.AllPassed ? C_GREEN : C_RED;
-            string sm = _lastRegression.AllPassed
-                ? $"✓  All {_lastRegression.PassCount} test(s) passed"
-                : $"✗  {_lastRegression.FailCount} test(s) failed — fix reverted";
-            GUI.Label(new Rect(x, y, w, 20), sm,
-                new GUIStyle(_sBody) { normal = { textColor = sc }, fontStyle = FontStyle.Bold });
         }
 
         // ════════════════════════════════════════════════════════════════════════
@@ -995,21 +1488,21 @@ namespace SolidAgent
             bool   hasFix = _fixes.ContainsKey(key);
             bool   hasKey = !string.IsNullOrEmpty(ApiKey);
 
+
             GUI.enabled = !done && !_isFixing && hasFix;
             if (Btn(new Rect(r.x + 16, r.y + 11, 110, 32), "✓  Apply Fix", C_GREEN))
                 ApplyFixAsync(key);
 
             GUI.enabled = !done;
-            if (Btn(new Rect(r.x + 134, r.y + 11, 66, 32), "Skip", C_SURF2))
+            if (Btn(new Rect(r.x + 134, r.y + 11, 56, 32), "Skip", C_SURF2))
                 SkipViolation(key);
 
             GUI.enabled = hasFix;
-            if (Btn(new Rect(r.x + 208, r.y + 11, 110, 32), "View Full Code", C_SURF2))
+            if (Btn(new Rect(r.x + 198, r.y + 11, 116, 32), "View Full Code", C_SURF2))
                 _activeTab = 1;
 
-            // Per-file PDF export
             GUI.enabled = true;
-            if (Btn(new Rect(r.x + 326, r.y + 11, 110, 32), "⬇  File PDF", C_ACCENT))
+            if (Btn(new Rect(r.x + 322, r.y + 11, 100, 32), "⬇  File Doc", C_ACCENT))
                 ExportFilePDF(v.Location.FilePath);
 
             // Right side badge
@@ -1087,16 +1580,17 @@ namespace SolidAgent
             HRule(new Rect(px, py, pw, 1), C_BORDER); py += 16;
 
             // ── Scan Folder ──────────────────────────────────────────────────────
-            GUI.Label(new Rect(px, py, pw, 16), "Scan Folder", _sBody); py += 18;
+            GUI.Label(new Rect(px, py, pw, 16), "Scan Folders", _sBody); py += 18;
 
-            // Current folder display
-            bool hasFolder    = !string.IsNullOrEmpty(_scanRoot);
-            string folderDisplay = hasFolder
-                ? _scanRoot.Replace(Application.dataPath, "Assets")
-                : "Entire Assets folder  (default)";
+            // Show selected folders summary
+            bool hasFolder = _scanRoots.Count > 0;
+            string folderDisplay = !hasFolder
+                ? "Entire Assets folder  (default)"
+                : _scanRoots.Count == 1
+                    ? _scanRoots.First().Replace(Application.dataPath, "Assets")
+                    : $"{_scanRoots.Count} folders selected";
             Color folderCol = hasFolder ? C_ACCENT : C_MUTED;
 
-            // Folder box
             Bg(new Rect(px, py, pw, 28), C_SURF2);
             Outline(new Rect(px, py, pw, 28), hasFolder ? C_ACCENT : C_BORDER);
             if (hasFolder) Bg(new Rect(px, py, 3, 28), C_ACCENT);
@@ -1104,77 +1598,79 @@ namespace SolidAgent
                 new GUIStyle(_sMuted) { fontSize = 10, normal = { textColor = folderCol } });
             py += 36;
 
-            // Buttons row
-            if (Btn(new Rect(px, py, 148, 28), "Select Folder", C_ACCENT))
-            {
-                string picked = EditorUtility.OpenFolderPanel(
-                    "Select folder to scan", Application.dataPath, "");
-                if (!string.IsNullOrEmpty(picked))
-                {
-                    // Must be inside Assets
-                    if (picked.StartsWith(Application.dataPath))
-                        _scanRoot = picked;
-                    else
-                        _statusMsg = "⚠  Folder must be inside your Assets folder.";
-                }
-            }
-
-            if (hasFolder && Btn(new Rect(px + 156, py, 130, 28), "Reset to All Assets", C_SURF2))
-                _scanRoot = "";
-
-            py += 42;
+            GUI.Label(new Rect(px, py, pw, 14),
+                "Use the folder picker on the home screen to select specific folders.",
+                new GUIStyle(_sMuted) { fontSize = 9 });
+            if (hasFolder && Btn(new Rect(px, py + 18, 130, 28), "Clear All Folders", C_SURF2))
+                _scanRoots.Clear();
+            py += 52;
 
             GUI.Label(new Rect(px, py, pw, 16),
                 "API key stored in EditorPrefs only — never committed to version control.", _sMuted);
             py += 32;
 
             if (Btn(new Rect(px, py, 116, 32), "Save & Close", C_ACCENT))
-            { EditorPrefs.SetString("SolidAgent_ScanRoot", _scanRoot ?? ""); _showSettings = false; }
+                _showSettings = false;
         }
 
         // ════════════════════════════════════════════════════════════════════════
         //  SYNTAX-HIGHLIGHTED CODE BLOCK
         // ════════════════════════════════════════════════════════════════════════
 
-        private void DrawCodeBlock(string code, float x, ref float y, float w)
+        private void DrawCodeBlock(string code, float x, ref float y, float w, int startLine = 1)
         {
             if (string.IsNullOrEmpty(code)) return;
 
             var   lines   = code.Split('\n');
-            float lineH   = 18f;
-            float padV    = 10f;
-            float gutterW = 40f;
+            float lineH   = 20f;       // taller rows — easier to read
+            float padV    = 8f;
+            float gutterW = 52f;       // wider gutter — 4-digit line numbers + padding
             float totalH  = lines.Length * lineH + padV * 2;
 
-            // Dark container background
-            Bg(new Rect(x, y, w, totalH), new Color32(13, 17, 23, 255));
-            Outline(new Rect(x, y, w, totalH), C_BORDER);
+            // Outer accent border
+            Bg(new Rect(x, y, w, totalH + 2),
+               new Color(C_BORDER.r, C_BORDER.g, C_BORDER.b, 0.6f));
 
-            // Gutter background + separator
-            Bg(new Rect(x, y, gutterW, totalH), new Color32(20, 25, 32, 255));
-            Bg(new Rect(x + gutterW, y, 1, totalH), C_BORDER);
+            // Code area background — VS Code Dark+ style
+            Bg(new Rect(x, y + 1, w, totalH), new Color32(13, 17, 23, 255));
+
+            // Gutter background
+            Bg(new Rect(x, y + 1, gutterW, totalH), new Color32(16, 20, 28, 255));
+
+            // Gutter separator — subtle vertical line
+            Bg(new Rect(x + gutterW, y + 1, 1, totalH),
+               new Color(C_BORDER.r, C_BORDER.g, C_BORDER.b, 0.45f));
 
             for (int i = 0; i < lines.Length; i++)
             {
-                float ly  = y + padV + i * lineH;
+                float ly  = y + 1 + padV + i * lineH;
                 string raw = lines[i].TrimEnd('\r');
 
-                // Subtle alternating row
+                // Alternating row — very subtle
                 if (i % 2 == 0)
                     Bg(new Rect(x + gutterW + 1, ly, w - gutterW - 1, lineH),
-                       new Color(1, 1, 1, 0.015f));
+                       new Color(1, 1, 1, 0.016f));
 
-                // Line number
-                GUI.Label(new Rect(x + 2, ly, gutterW - 5, lineH),
-                    (i + 1).ToString(), _sLineNum);
+                // Hover row highlight
+                if (new Rect(x, ly, w, lineH).Contains(Event.current.mousePosition))
+                    Bg(new Rect(x + gutterW + 1, ly, w - gutterW - 1, lineH),
+                       new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.045f));
 
-                // Syntax-highlighted line using richText
+                // Line number — right-aligned, actual file line number
+                GUI.Label(
+                    new Rect(x + 4, ly + 1, gutterW - 10, lineH - 2),
+                    (startLine + i).ToString(),
+                    new GUIStyle(_sLineNum) { alignment = TextAnchor.MiddleRight });
+
+                // Syntax-highlighted code line
                 string highlighted = BuildRichTextLine(raw);
-                GUI.Label(new Rect(x + gutterW + 6, ly, w - gutterW - 10, lineH),
-                    highlighted, _sCode);
+                GUI.Label(
+                    new Rect(x + gutterW + 10, ly + 1, w - gutterW - 16, lineH - 2),
+                    highlighted,
+                    new GUIStyle(_sCode) { fontSize = 12 });
             }
 
-            y += totalH + 14;
+            y += totalH + 2 + 16;
         }
 
         // Build a richText string with <color=#RRGGBB> tags — works reliably in Unity IMGUI
@@ -1438,49 +1934,36 @@ namespace SolidAgent
             var files = new List<string>();
             await Task.Run(() =>
             {
-                string root = !string.IsNullOrEmpty(_scanRoot) && Directory.Exists(_scanRoot)
-                    ? _scanRoot
-                    : Application.dataPath;
-                foreach (var f in Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories))
+                // Collect scan roots — if none selected, scan entire Assets folder
+                var roots = _scanRoots.Count > 0
+                    ? _scanRoots.ToList()
+                    : new List<string> { Application.dataPath };
+
+                var seen = new HashSet<string>();
+                foreach (var root in roots)
                 {
-                    string n    = f.Replace('\\', '/');
-                    string name = Path.GetFileName(f);
+                    if (!Directory.Exists(root)) continue;
+                    foreach (var f in Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories))
+                    {
+                        if (!seen.Add(f)) continue; // deduplicate if roots overlap
 
-                    // Skip by folder
-                    if (n.Contains("/Plugins/"))          continue;
-                    if (n.Contains("/PackageCache/"))      continue;
-                    if (n.Contains("/TextMesh Pro/"))      continue;
-                    if (n.Contains("/Editor/"))            continue;
-                    if (n.Contains("/ThirdParty/"))        continue;
-                    if (n.Contains("/Packages/"))          continue;
-                    if (n.Contains("/SDK/"))               continue;
-                    if (n.Contains("/Sdk/"))               continue;
-                    if (n.Contains(".Generated.cs"))       continue;
-                    if (n.Contains("AssemblyInfo.cs"))     continue;
+                        string n    = f.Replace('\\', '/');
+                        string name = Path.GetFileName(f);
 
-                    // Skip known SDK file prefixes
-                    string nameLower = name.ToLower();
-                    if (nameLower.StartsWith("adjust"))        continue;
-                    if (nameLower.StartsWith("appmetrica"))    continue;
-                    if (nameLower.StartsWith("maxsdk"))        continue;
-                    if (nameLower.StartsWith("firebase"))      continue;
-                    if (nameLower.StartsWith("googlemobile"))  continue;
-                    if (nameLower.StartsWith("ironsource"))    continue;
-                    if (nameLower.StartsWith("appsflyer"))     continue;
-                    if (nameLower.StartsWith("gameanalytics")) continue;
-                    if (nameLower.StartsWith("chartboost"))    continue;
-                    if (nameLower.StartsWith("vungle"))        continue;
-                    if (nameLower.StartsWith("unityads"))      continue;
-                    if (nameLower.StartsWith("metica"))        continue;
-                    if (nameLower.StartsWith("ireporter"))     continue;
-                    if (nameLower.StartsWith("applovin"))      continue;
-                    if (nameLower.StartsWith("admob"))         continue;
+                        // Skip Unity system / generated folders — not developer code
+                        if (n.Contains("/PackageCache/"))      continue;
+                        if (n.Contains("/TextMesh Pro/"))      continue;
+                        if (n.Contains("/Editor/"))            continue;
+                        if (n.Contains("/Packages/"))          continue;
+                        if (n.Contains(".Generated.cs"))       continue;
+                        if (n.Contains("AssemblyInfo.cs"))     continue;
 
-                    // Skip files over 200KB — likely generated
-                    try { if (new FileInfo(f).Length > 200 * 1024) continue; } catch { continue; }
+                        // Skip files over 200KB — almost certainly generated or third-party
+                        try { if (new FileInfo(f).Length > 200 * 1024) continue; } catch { continue; }
 
                     files.Add(f);
-                }
+                    }  // end foreach file
+                }  // end foreach root
             });
 
             var analyzer = new SolidAnalyzer();
@@ -1516,46 +1999,55 @@ namespace SolidAgent
         {
             if (string.IsNullOrEmpty(ApiKey)) return;
             _isFixing = true;
-
-            // Step 1
+            _fixStartTime = EditorApplication.timeSinceStartup;
             _statusMsg = "📡  Connecting to Claude API…"; Repaint();
             await Task.Delay(200);
 
-            // Step 2
             _statusMsg = "📂  Reading source file…"; Repaint();
             var v      = FindViolation(key);
             string src = File.ReadAllText(v.Location.FilePath);
 
-            // Step 3
-            _statusMsg = "🔍  Analysing violation…"; Repaint();
+            // Collect ALL violations for this file — fix them all in one Claude call
+            var allViolationsInFile = _results
+                .Where(r => r.FilePath == v.Location.FilePath)
+                .SelectMany(r => r.Violations)
+                .ToList();
+
+            // Collect namespace context from sibling and parent files
+            // so Claude can generate correct using directives
+            string nsContext = "";
+            await Task.Run(() => {
+                nsContext = BuildNamespaceContext(v.Location.FilePath);
+            });
+
+            _statusMsg = allViolationsInFile.Count > 1
+                ? $"🔍  Found {allViolationsInFile.Count} violations in {v.Location.FileName} — fixing all at once…"
+                : "🔍  Analysing violation…";
+            Repaint();
             await Task.Delay(100);
 
-            // Step 4
             _statusMsg = "⚙️  Generating fix with Claude…"; Repaint();
 
             GeneratedFix fix = null;
             string error = null;
             try
             {
-                fix = await new AIFixGenerator(ApiKey).GenerateFixAsync(v, src);
+                fix = await new AIFixGenerator(ApiKey).GenerateFixAsync(v, src, allViolationsInFile, nsContext);
             }
-            catch (System.Exception ex)
-            {
-                error = ex.Message;
-            }
+            catch (System.Exception ex) { error = ex.Message; }
 
             if (error != null)
             {
+                // Store error against the key so the Fix tab can show it inline
+                _fixErrors[key] = error;
                 _statusMsg = $"✗  Error: {error}";
-                _isFixing  = false; Repaint();
+                _isFixing  = false; _activeTab = 1; Repaint();
                 return;
             }
 
-            // Step 5
             _statusMsg = "🔬  Checking behavioral contract…"; Repaint();
             await Task.Delay(200);
 
-            // Contract check — compare public API including any new files the fix creates
             string newFilesContent = "";
             if (fix.NewFilesNeeded != null && fix.NewFilesNeeded.Count > 0)
                 newFilesContent = string.Join("\n", fix.NewFilesNeeded
@@ -1565,10 +2057,60 @@ namespace SolidAgent
                 ContractChecker.Check(src, fix.FixedCode ?? "", newFilesContent));
             _contractChecks[key] = contractCheck;
 
+            // Sanity check — if FixedCode is empty or still contains format markers,
+            // the parse failed. Show an error instead of storing a broken fix.
+            bool parseOk = !string.IsNullOrWhiteSpace(fix.FixedCode)
+                && !fix.FixedCode.Contains("FIXED_FILE_START")
+                && !fix.FixedCode.Contains("DIFF_SUMMARY:");
+
+            if (!parseOk)
+            {
+                _fixErrors[key] = "Claude response could not be parsed correctly. Try generating the fix again.";
+                _statusMsg = "✗  Parse error — response format unexpected";
+                _isFixing  = false; _activeTab = 1; Repaint();
+                return;
+            }
+
+            // Detect missing new files — find GetComponent<X>() calls in fixedCode
+            // where X.cs is not in NewFilesNeeded or NewFileContents
+            var missingFiles = new List<string>();
+            var getComponentMatches = System.Text.RegularExpressions.Regex.Matches(
+                fix.FixedCode, @"GetComponent<(\w+)>\(\)");
+            foreach (System.Text.RegularExpressions.Match m in getComponentMatches)
+            {
+                string typeName = m.Groups[1].Value;
+                string fileName = typeName + ".cs";
+                // Skip Unity built-in types
+                if (typeName.StartsWith("Unity") || typeName == "Transform" ||
+                    typeName == "Rigidbody" || typeName == "Collider") continue;
+                // Check if this type exists in original source or as a new file
+                bool existsInSource = fix.FixedCode.Contains($"class {typeName}") ||
+                    (fix.NewFilesNeeded.Contains(fileName) &&
+                     fix.NewFileContents.ContainsKey(fileName) &&
+                     !string.IsNullOrWhiteSpace(fix.NewFileContents[fileName]));
+                if (!existsInSource && !missingFiles.Contains(fileName))
+                    missingFiles.Add(fileName);
+            }
+
+            if (missingFiles.Count > 0)
+            {
+                string missing = string.Join(", ", missingFiles);
+                _fixErrors[key] = $"Fix references types that were not generated: {missing}\n" +
+                    "The fix would cause compile errors. Try generating again — the prompt now explicitly " +
+                    "requires all referenced classes to be included.";
+                _statusMsg = $"✗  Fix incomplete — {missingFiles.Count} file(s) missing: {missing}";
+                _isFixing  = false; _activeTab = 1; Repaint();
+                return;
+            }
+
             _statusMsg = contractCheck.Passed
                 ? "✓  Fix generated — contract check passed"
                 : "⚠  Fix generated — review contract warnings";
-            _fixes[key]  = fix;
+
+            // Store the fix under all violation keys for this file
+            foreach (var viol in allViolationsInFile)
+                _fixes[MakeKey(viol)] = fix;
+
             _isFixing    = false;
             _activeTab   = 1;
             Repaint();
@@ -1578,23 +2120,72 @@ namespace SolidAgent
         {
             if (!_fixes.TryGetValue(key, out var fix)) return;
             var v = FindViolation(key);
-            _isFixing = true; _statusMsg = "Running regression…"; Repaint();
+            _isFixing = true;
+            _statusMsg = $"Applying fix to {v.Location.FileName}…"; Repaint();
 
-            RegressionReport report = null;
+            // Apply fix on background thread — file I/O only, no Unity APIs
             await Task.Run(() => {
                 var h = new RegressionHarness(Application.dataPath);
-                h.CaptureBaselineAsync(v.Location.FilePath).Wait();
                 h.ApplyFix(fix, v.Location.FilePath);
-                report = h.CompareAsync(v.Location.FilePath).Result;
-                if (!report.AllPassed) h.RevertFix(v.Location.FilePath);
             });
 
-            _lastRegression = report; _activeTab = 2;
-            if (report.AllPassed)
-            { _decisions[key] = ReviewDecision.Applied; AssetDatabase.Refresh(); _statusMsg = "✓ Applied."; }
-            else
-            { _statusMsg = "✗ Regression failed — reverted."; }
+            _decisions[key] = ReviewDecision.Applied;
+            _activeTab = 1;
+            AssetDatabase.Refresh();
+            _statusMsg = $"✓ Fix applied to {v.Location.FileName} — Unity will recompile automatically.";
             _isFixing = false; Repaint();
+        }
+
+        // Scans nearby .cs files to extract namespace declarations and using directives
+        // so Claude can generate correct imports in new files
+        private string BuildNamespaceContext(string filePath)
+        {
+            var namespaces = new HashSet<string>();
+            var usings     = new HashSet<string>();
+
+            try
+            {
+                // Scan the file itself, its folder, and up to 2 parent folders
+                var dirs = new List<string>();
+                string dir = Path.GetDirectoryName(filePath);
+                for (int i = 0; i < 3 && !string.IsNullOrEmpty(dir); i++)
+                {
+                    dirs.Add(dir);
+                    dir = Path.GetDirectoryName(dir);
+                }
+
+                foreach (var d in dirs)
+                {
+                    foreach (var f in Directory.GetFiles(d, "*.cs", SearchOption.TopDirectoryOnly))
+                    {
+                        try
+                        {
+                            foreach (var line in File.ReadLines(f))
+                            {
+                                string t = line.Trim();
+                                if (t.StartsWith("namespace "))
+                                    namespaces.Add(t.TrimEnd('{').Trim());
+                                else if (t.StartsWith("using ") && t.EndsWith(";"))
+                                    usings.Add(t);
+                                else if (!t.StartsWith("//") && t.Length > 0 && !t.StartsWith("using") && !t.StartsWith("namespace"))
+                                    break; // stop at first code line
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+
+            if (namespaces.Count == 0 && usings.Count == 0) return "";
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("CONTEXT — namespaces and usings found in this project area:");
+            foreach (var u in usings.OrderBy(x => x))
+                sb.AppendLine("  " + u);
+            foreach (var n in namespaces.OrderBy(x => x))
+                sb.AppendLine("  " + n + " { ... }");
+            return sb.ToString();
         }
 
         private void SkipViolation(string key)
@@ -1603,15 +2194,399 @@ namespace SolidAgent
         private void ResetToHome()
         {
             _screen = Screen.Home; _results.Clear(); _fixes.Clear();
-            _decisions.Clear(); _activeId = null; _statusMsg = "";
-            _report = null; _contractChecks.Clear(); Repaint();
+            _decisions.Clear(); _fixErrors.Clear(); _activeId = null; _statusMsg = "";
+            _report = null; _contractChecks.Clear();
+            _showSettings = false;  // close settings if open
+            Repaint();
         }
 
         // ════════════════════════════════════════════════════════════════════════
         //  HELPERS
         // ════════════════════════════════════════════════════════════════════════
 
+        // ── Embedded Claude Code terminal ─────────────────────────────────────────
+
+        private void LaunchEmbeddedClaude(Violation v, List<Violation> allViolations)
+        {
+            string prompt  = BuildClaudeCodePrompt(v, allViolations);
+            string tmpFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gd_solid_prompt.md");
+            System.IO.File.WriteAllText(tmpFile, prompt);
+            EditorGUIUtility.systemCopyBuffer = prompt;
+
+            string projectFolder = System.IO.Path.GetDirectoryName(Application.dataPath);
+            string claudePath    = FindClaudePath() ?? "claude";
+
+            string scriptFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gd_open_claude.sh");
+            System.IO.File.WriteAllText(scriptFile,
+                "#!/bin/zsh\n" +
+                $"export PATH=\"$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:$HOME/.npm-global/bin\"\n" +
+                $"cd \"{projectFolder}\"\n" +
+                "echo ''\n" +
+                "echo '=== GD CodeShield — Claude Code Fix ==='\n" +
+                $"echo 'File: {v.Location.FileName}'\n" +
+                $"echo 'Violations: {allViolations.Count}'\n" +
+                "echo 'Launching Claude Code with prompt...'\n" +
+                "echo ''\n" +
+                $"\"{claudePath}\" \"$(cat \'{tmpFile}\')\"\n"
+            );
+
+            try
+            {
+                System.Diagnostics.Process.Start("/bin/chmod", $"+x \"{scriptFile}\"")?.WaitForExit(1000);
+
+                var osa = new System.Diagnostics.Process();
+                osa.StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName        = "osascript",
+                    Arguments       = $"-e 'tell application \"Terminal\" to do script \"{scriptFile}\"' " +
+                                      $"-e 'tell application \"Terminal\" to activate'",
+                    UseShellExecute = false,
+                    CreateNoWindow  = true
+                };
+                osa.Start();
+
+                lock (_terminalLock)
+                {
+                    _terminalOutput.Clear();
+                    _terminalOutput.AppendLine("🚀  Claude Code is running in Terminal");
+                    _terminalOutput.AppendLine("");
+                    _terminalOutput.AppendLine($"File:  {v.Location.FilePath}");
+                    _terminalOutput.AppendLine("");
+                    _terminalOutput.AppendLine("Claude Code is reading your project files and");
+                    _terminalOutput.AppendLine("applying the fix. Watch the Terminal window.");
+                    _terminalOutput.AppendLine("");
+                    _terminalOutput.AppendLine("When it finishes, switch back to Unity.");
+                    _terminalOutput.AppendLine("Unity will recompile automatically.");
+                }
+                _terminalDone    = false;
+                _terminalRunning = false;
+                _activeTab       = 2;
+                Repaint();
+            }
+            catch (System.Exception ex)
+            {
+                lock (_terminalLock)
+                {
+                    _terminalOutput.Clear();
+                    _terminalOutput.AppendLine($"Could not open Terminal: {ex.Message}");
+                    _terminalOutput.AppendLine("Prompt copied to clipboard.");
+                    _terminalOutput.AppendLine($"Open Terminal manually, cd to your project, then run: claude");
+                }
+                _activeTab = 2;
+                Repaint();
+            }
+        }
+
+
+        private string FindClaudePath()
+        {
+            // Unity Editor child processes don't inherit the shell PATH (zsh/bash)
+            // So we ask the shell itself where claude is
+            string[] shells = { "/bin/zsh", "/bin/bash" };
+            foreach (var shell in shells)
+            {
+                try
+                {
+                    var p = new System.Diagnostics.Process
+                    {
+                        StartInfo = new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName               = shell,
+                            Arguments              = "-l -c \"which claude\"",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError  = true,
+                            UseShellExecute        = false,
+                            CreateNoWindow         = true
+                        }
+                    };
+                    p.Start();
+                    string result = p.StandardOutput.ReadToEnd().Trim();
+                    p.WaitForExit(3000);
+                    if (!string.IsNullOrEmpty(result) && System.IO.File.Exists(result))
+                        return result;
+                }
+                catch { }
+            }
+
+            // Also check common npm global install locations
+            string home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
+            string[] candidates =
+            {
+                "/usr/local/bin/claude",
+                "/opt/homebrew/bin/claude",
+                System.IO.Path.Combine(home, ".npm-global/bin/claude"),
+                System.IO.Path.Combine(home, "Library/pnpm/claude"),
+                System.IO.Path.Combine(home, ".volta/bin/claude"),
+                System.IO.Path.Combine(home, ".nvm/versions/node/bin/claude"),
+            };
+            foreach (var c in candidates)
+                if (System.IO.File.Exists(c)) return c;
+
+            return null;
+        }
+
+        private void DrawEmbeddedTerminal(float x, ref float y, float w)
+        {
+            // Header
+            Bg(new Rect(x, y, w, 28), new Color(0.08f, 0.08f, 0.08f, 1f));
+            Bg(new Rect(x, y, w, 2), _terminalDone && !_terminalRunning ? C_GREEN : C_ACCENT);
+
+            string title = _terminalRunning ? "● Claude Code running…" :
+                           _terminalDone    ? "✓ Claude Code finished" :
+                                             "Claude Code Terminal";
+            GUI.Label(new Rect(x + 10, y + 6, w - 120, 16), title,
+                new GUIStyle(_sBody) { fontSize = 10,
+                    normal = { textColor = _terminalRunning ? C_ACCENT : _terminalDone ? C_GREEN : C_MUTED } });
+
+            // Stop / Clear buttons
+            if (_terminalRunning)
+            {
+                if (Btn(new Rect(x + w - 80, y + 4, 68, 20), "■  Stop", C_RED))
+                {
+                    try { _claudeProcess?.Kill(); } catch { }
+                    _terminalRunning = false; _terminalDone = true;
+                }
+            }
+            else if (Btn(new Rect(x + w - 80, y + 4, 68, 20), "Clear", C_SURF2))
+            {
+                lock (_terminalLock) _terminalOutput.Clear();
+                _terminalDone = false;
+            }
+            y += 30;
+
+            // Terminal output area
+            float termH = 320f;
+            Bg(new Rect(x, y, w, termH), new Color(0.05f, 0.05f, 0.05f, 1f));
+            Outline(new Rect(x, y, w, termH), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.25f));
+
+            string output;
+            lock (_terminalLock) output = _terminalOutput.ToString();
+
+            // Measure content height
+            var termStyle = new GUIStyle(_sMuted)
+            {
+                fontSize  = 9,
+                wordWrap  = true,
+                richText  = false,
+                normal    = { textColor = new Color(0.85f, 0.85f, 0.85f, 1f) }
+            };
+            float contentH = termStyle.CalcHeight(new GUIContent(output), w - 20);
+            contentH = Mathf.Max(contentH, termH);
+
+            if (_terminalScrollToBottom)
+            {
+                _terminalScroll = new Vector2(0, contentH);
+                _terminalScrollToBottom = false;
+            }
+
+            _terminalScroll = GUI.BeginScrollView(
+                new Rect(x, y, w, termH), _terminalScroll,
+                new Rect(0, 0, w - 16, contentH));
+            GUI.Label(new Rect(4, 4, w - 20, contentH), output, termStyle);
+            GUI.EndScrollView();
+            y += termH + 6;
+
+            // Refresh Unity button when done
+            if (_terminalDone && !_terminalRunning)
+            {
+                Bg(new Rect(x, y, w, 32), new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.07f));
+                Outline(new Rect(x, y, w, 32), new Color(C_GREEN.r, C_GREEN.g, C_GREEN.b, 0.3f));
+                GUI.Label(new Rect(x + 12, y + 8, w - 130, 16),
+                    "Claude Code finished — Unity will recompile automatically.",
+                    new GUIStyle(_sMuted) { fontSize = 9 });
+                y += 36;
+            }
+        }
+
+        private void OpenInClaudeCode(Violation v, List<Violation> allViolations)
+        {
+            string prompt  = BuildClaudeCodePrompt(v, allViolations);
+            string folder  = Path.GetDirectoryName(Application.dataPath);
+            string tmpFile = Path.Combine(Path.GetTempPath(), "gd_solid_prompt.md");
+            File.WriteAllText(tmpFile, prompt);
+
+            // Also copy to clipboard as fallback
+            EditorGUIUtility.systemCopyBuffer = prompt;
+
+            try
+            {
+#if UNITY_EDITOR_OSX || UNITY_EDITOR_LINUX
+                // Write a shell script that cd's to the project and runs claude
+                string scriptFile = Path.Combine(Path.GetTempPath(), "gd_open_claude.sh");
+                File.WriteAllText(scriptFile,
+                    $"#!/bin/bash\n" +
+                    $"cd \"{folder}\"\n" +
+                    $"echo ''\n" +
+                    $"echo '=== GD CodeShield — SOLID Fix ==='\n" +
+                    $"echo 'Prompt loaded from: {tmpFile}'\n" +
+                    $"echo 'Press ENTER to run claude, or Ctrl+C to cancel.'\n" +
+                    $"echo ''\n" +
+                    $"read\n" +
+                    $"claude \"$(cat '{tmpFile}')\"\n"
+                );
+                System.Diagnostics.Process.Start("chmod", $"+x \"{scriptFile}\"");
+
+                // Open Terminal running the script and bring it to front
+                var osa = new System.Diagnostics.Process();
+                osa.StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName        = "osascript",
+                    Arguments       = $"-e 'tell application \"Terminal\" to do script \"{scriptFile}\"' -e 'tell application \"Terminal\" to activate'",
+                    UseShellExecute = false,
+                    CreateNoWindow  = true
+                };
+                osa.Start();
+
+                _statusMsg = "🚀  Terminal opened — press ENTER to run Claude Code (prompt also copied to clipboard)";
+#else
+                // Windows — write bat file and open cmd
+                string batFile = Path.Combine(Path.GetTempPath(), "gd_open_claude.bat");
+                File.WriteAllText(batFile,
+                    $"@echo off\r\n" +
+                    $"cd /d \"{folder}\"\r\n" +
+                    $"echo.\r\n" +
+                    $"echo === GD CodeShield - SOLID Fix ===\r\n" +
+                    $"echo Prompt loaded from: {tmpFile}\r\n" +
+                    $"echo Press ENTER to run claude, or Ctrl+C to cancel.\r\n" +
+                    $"echo.\r\n" +
+                    $"pause\r\n" +
+                    $"claude < \"{tmpFile}\"\r\n"
+                );
+
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName        = batFile,
+                    UseShellExecute = true,
+                    WorkingDirectory = folder
+                });
+
+                _statusMsg = "🚀  Command Prompt opened — press ENTER to run Claude Code";
+#endif
+            }
+            catch (System.Exception ex)
+            {
+                EditorGUIUtility.systemCopyBuffer = prompt;
+                _statusMsg = $"⚠  Could not open Terminal ({ex.Message}). Prompt copied — run: claude  and paste.";
+            }
+
+            Repaint();
+        }
+
         private string MakeKey(Violation v)           => v.Location.FilePath + "||" + v.Id;
+
+        private List<Violation> GetFileViolations(string filePath)
+            => _results
+                .Where(r => r.FilePath == filePath)
+                .SelectMany(r => r.Violations)
+                .ToList();
+
+        // Builds a complete prompt for use in Claude Code (claude.ai/code or VS Code extension)
+        // The developer copies this and pastes it — Claude Code does the rest
+        private string BuildClaudeCodePrompt(Violation primary, List<Violation> allViolations)
+        {
+            var sb = new System.Text.StringBuilder();
+
+            sb.AppendLine("# SOLID Fix Task");
+            sb.AppendLine();
+            sb.AppendLine("You are fixing SOLID principle violations in a Unity C# project.");
+            sb.AppendLine("Use your file system tools to read any files you need before making changes.");
+            sb.AppendLine();
+            sb.AppendLine("## File to fix");
+            sb.AppendLine($"`{primary.Location.FilePath}`");
+            sb.AppendLine();
+            sb.AppendLine("## Violations to fix");
+            sb.AppendLine();
+
+            for (int i = 0; i < allViolations.Count; i++)
+            {
+                var v = allViolations[i];
+                sb.AppendLine($"### {i + 1}. {v.Principle} — {v.Title}");
+                sb.AppendLine($"- **Evidence:** {v.Evidence}");
+                sb.AppendLine($"- **Line:** {v.Location.StartLine}");
+                sb.AppendLine($"- **Description:** {v.Description}");
+
+                // Include the violated code so Claude Code doesn't have to search
+                if (!string.IsNullOrWhiteSpace(v.OriginalCode))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("**Violated code:**");
+                    sb.AppendLine("```csharp");
+                    sb.AppendLine(v.OriginalCode.Trim());
+                    sb.AppendLine("```");
+                }
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("## Instructions");
+            sb.AppendLine();
+            sb.AppendLine("1. Read the file at the path above");
+            sb.AppendLine("2. Identify every type, interface, and namespace this file depends on");
+            sb.AppendLine("3. Read those files too — understand their full signatures before writing any code");
+            sb.AppendLine("4. Fix ALL violations listed above in one pass");
+            sb.AppendLine("5. If you need to create new files, place them in the same folder as the original");
+            sb.AppendLine("6. **CRITICAL:** Before finishing, check every type referenced in every new file you created.");
+            sb.AppendLine("   If any type does not exist as a file on disk, create it now.");
+            sb.AppendLine("   Do NOT stop until ALL referenced types exist as actual files.");
+            sb.AppendLine("7. After writing all files, confirm the list of files created and that each compiles.");
+            sb.AppendLine();
+            sb.AppendLine("## Rules");
+            sb.AppendLine();
+            sb.AppendLine("- Every new file must use the EXACT same namespace as the original file");
+            sb.AppendLine("- Copy all `using` directives from the original file into new files");
+            sb.AppendLine("- Never reference a type you have not read from an actual file");
+            sb.AppendLine("- Preserve all existing public method signatures exactly");
+            sb.AppendLine("- Keep all MonoBehaviour lifecycle methods intact (Awake, Start, Update, etc.)");
+            sb.AppendLine("- No dependency injection — use GetComponent for wiring between MonoBehaviours");
+            sb.AppendLine("- After applying the fix, verify Unity will compile it without errors");
+            sb.AppendLine();
+
+            // Principle-specific guidance
+            var principles = allViolations.Select(v2 => v2.Principle).Distinct().ToList();
+            if (principles.Contains(SolidPrinciple.SRP))
+            {
+                sb.AppendLine("## SRP guidance");
+                sb.AppendLine("Split the class into focused MonoBehaviours. The original class becomes a thin");
+                sb.AppendLine("orchestrator that delegates to controllers via GetComponent:");
+                sb.AppendLine("```csharp");
+                sb.AppendLine("private AdsController _ads;");
+                sb.AppendLine("void Awake() { _ads = GetComponent<AdsController>(); }");
+                sb.AppendLine("public void ShowAd() { _ads.ShowAd(); }  // pure delegation");
+                sb.AppendLine("```");
+                sb.AppendLine("The new controller classes must NOT depend on each other.");
+                sb.AppendLine();
+            }
+            if (principles.Contains(SolidPrinciple.OCP))
+            {
+                sb.AppendLine("## OCP guidance");
+                sb.AppendLine("Replace type-based switch statements or long if/else chains with polymorphism.");
+                sb.AppendLine("Use interfaces or abstract base classes so new types can be added without");
+                sb.AppendLine("modifying existing code.");
+                sb.AppendLine();
+            }
+            if (principles.Contains(SolidPrinciple.ISP))
+            {
+                sb.AppendLine("## ISP guidance");
+                sb.AppendLine("Split the fat interface into 2-4 smaller focused interfaces.");
+                sb.AppendLine("Each class should only implement the interface(s) relevant to it.");
+                sb.AppendLine();
+            }
+            if (principles.Contains(SolidPrinciple.LSP))
+            {
+                sb.AppendLine("## LSP guidance");
+                sb.AppendLine("Remove NotImplementedException throws. Either implement the method properly,");
+                sb.AppendLine("or remove it from the interface (apply ISP first if needed).");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("## Project context");
+            sb.AppendLine($"- Unity project, Assets folder: look for files relative to the Assets/ directory");
+            sb.AppendLine($"- File being fixed is at: `{primary.Location.FilePath}`");
+            sb.AppendLine($"- Folder: `{System.IO.Path.GetDirectoryName(primary.Location.FilePath)?.Replace('\\', '/')}`");
+
+            return sb.ToString();
+        }
+
+
 
         private Violation FindViolation(string key)
         {
@@ -1637,13 +2612,17 @@ namespace SolidAgent
             try
             {
                 string path = SolidReportExporter.Export(_report);
-                _statusMsg = "✓ PDF saved to SolidReports/";
+                // Don't overwrite regression status — show alongside
+                string prevMsg = _statusMsg;
+                _statusMsg = string.IsNullOrEmpty(prevMsg) || prevMsg.StartsWith("✓ Doc") || prevMsg.StartsWith("✓ Word")
+                    ? "✓ Word doc saved to SolidReports/"
+                    : prevMsg + "  ·  ✓ Doc saved";
                 // Open the PDF file directly
                 System.Diagnostics.Process.Start(path);
             }
             catch (System.Exception ex)
             {
-                _statusMsg = $"✗ PDF export failed: {ex.Message}";
+                _statusMsg = $"✗ Export failed: {ex.Message}";
             }
             Repaint();
         }
@@ -1656,12 +2635,15 @@ namespace SolidAgent
                 var fileResult = _results.FirstOrDefault(r => r.FilePath == filePath);
                 if (fileResult == null) return;
                 string path = SolidReportExporter.ExportFile(fileResult, _report);
-                _statusMsg = "\u2713 PDF saved — " + System.IO.Path.GetFileNameWithoutExtension(filePath);
+                string prevMsg2 = _statusMsg;
+                _statusMsg = string.IsNullOrEmpty(prevMsg2) || prevMsg2.Contains("Doc saved") || prevMsg2.Contains("Word doc")
+                    ? "✓ Doc saved - " + System.IO.Path.GetFileNameWithoutExtension(filePath)
+                    : prevMsg2 + "  ·  ✓ Doc saved";
                 System.Diagnostics.Process.Start(path);
             }
             catch (System.Exception ex)
             {
-                _statusMsg = "\u2717 PDF failed: " + ex.Message;
+                _statusMsg = "\u2717 Export failed: " + ex.Message;
             }
             Repaint();
         }
@@ -1719,3 +2701,4 @@ namespace SolidAgent
 
     public enum ReviewDecision { None, Applied, Skipped }
 }
+

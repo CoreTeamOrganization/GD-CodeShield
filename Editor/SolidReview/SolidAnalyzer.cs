@@ -38,11 +38,13 @@ namespace SolidAgent
 
     public class GeneratedFix
     {
-        public string       ViolationId    { get; set; }
-        public string       FixedCode      { get; set; }
-        public string       DiffSummary    { get; set; }
-        public string       Explanation    { get; set; }
-        public List<string> NewFilesNeeded { get; set; } = new List<string>();
+        public string                       ViolationId      { get; set; }
+        public string                       FixedCode        { get; set; }
+        public string                       DiffSummary      { get; set; }
+        public string                       Explanation      { get; set; }
+        public List<string>                 NewFilesNeeded   { get; set; } = new List<string>();
+        // Full source code for each new file — key = filename, value = full C# content
+        public Dictionary<string, string>   NewFileContents  { get; set; } = new Dictionary<string, string>();
     }
 
     public class FileAnalysisResult
@@ -230,8 +232,78 @@ namespace SolidAgent
         // ── SRP ───────────────────────────────────────────────────────────────────
         // Flag classes with too many methods or multiple distinct concern groups
 
+        // Detect orchestrator/facade after SRP split.
+        // Patterns that are NOT violations:
+        //   1. Class whose methods are all single-statement field delegations
+        //      e.g.  void ShowAd() { _ads.ShowAd(); }
+        //   2. Class with injected controller/manager fields (GetComponent wiring)
+        //      e.g.  private AdsController _ads; + Awake(){ _ads = GetComponent<...>(); }
+        private bool IsDelegationClass(ClassInfo cls)
+        {
+            if (cls.Methods.Count == 0) return false;
+
+            string body = cls.Body;
+
+            // Heuristic 1 — class has private/serialized fields pointing to controllers
+            bool hasControllerFields =
+                Regex.IsMatch(body, @"private\s+\w+Controller\s+\w+", RegexOptions.Multiline) ||
+                Regex.IsMatch(body, @"private\s+\w+Manager\s+\w+",    RegexOptions.Multiline) ||
+                Regex.IsMatch(body, @"private\s+\w+Service\s+\w+",    RegexOptions.Multiline) ||
+                Regex.IsMatch(body, @"private\s+\w+Handler\s+\w+",    RegexOptions.Multiline) ||
+                Regex.IsMatch(body, @"\[RequireComponent",             RegexOptions.Multiline);
+
+            if (!hasControllerFields) return false;
+
+            // Heuristic 2 — count methods whose bodies contain only delegating statements
+            // Split body into method blocks by finding "void/public/private ... { ... }"
+            // Use a line-count approach: if a method spans 1-4 non-empty lines it's a delegator
+            int delegators    = 0;
+            int lifecycleMths = 0; // Awake, Start etc don't count against delegation
+            string[] lifecycle = { "Awake", "Start", "Update", "FixedUpdate", "LateUpdate",
+                                   "OnEnable", "OnDisable", "OnDestroy", "OnApplicationPause" };
+
+            foreach (var mname in cls.Methods)
+            {
+                if (lifecycle.Any(l => l == mname)) { lifecycleMths++; continue; }
+
+                // Find method signature + body block
+                var mRx = new Regex(
+                    @"\b" + Regex.Escape(mname) + @"\s*\([^)]*\)\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}",
+                    RegexOptions.Singleline);
+                var match = mRx.Match(body);
+                if (!match.Success) continue;
+
+                string mBody = match.Groups[1].Value.Trim();
+                // Count non-empty, non-brace lines
+                var codeLines = mBody.Split('\n')
+                    .Select(l => l.Trim())
+                    .Where(l => l.Length > 0 && l != "{" && l != "}")
+                    .ToList();
+
+                bool isDelegate =
+                    codeLines.Count <= 4 &&          // short body
+                    codeLines.Any(l =>                // at least one delegating call
+                        l.Contains("Controller.") || l.Contains("controller.") ||
+                        l.Contains("Manager.")    || l.Contains("manager.")    ||
+                        l.Contains("Service.")    || l.Contains("service.")    ||
+                        l.Contains("Handler.")    || l.Contains("handler.")    ||
+                        Regex.IsMatch(l, @"_\w+\.\w+\(")); // private field call pattern
+
+                if (isDelegate) delegators++;
+            }
+
+            int scoredMethods = cls.Methods.Count - lifecycleMths;
+            if (scoredMethods <= 0) return true;
+
+            // If ≥70% of non-lifecycle methods are pure delegators → orchestrator, not a violation
+            return (float)delegators / scoredMethods >= 0.70f;
+        }
+
         private void CheckSRP(ClassInfo cls, string filePath, FileAnalysisResult result, ref int idx)
         {
+            // Skip orchestrator classes — they delegate intentionally after an SRP split
+            if (IsDelegationClass(cls)) return;
+
             var concerns = DetectConcerns(cls.Methods);
             bool tooMany      = cls.Methods.Count > SRP_MAX_METHODS;
             bool multiConcern = concerns.Count >= 3;
