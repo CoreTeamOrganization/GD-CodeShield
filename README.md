@@ -17,7 +17,8 @@ https://github.com/CoreTeamOrganization/GD-CodeShield.git
 **Requirements:**
 - Unity 2021.3 or newer
 - `com.unity.nuget.newtonsoft-json` 3.0.2 (auto-installed as dependency)
-- Claude API key for AI fix generation in SOLID Review (optional — scanning is always free)
+- Node.js installed on the machine (for Word Doc export only)
+- Claude Code CLI for AI-assisted fixes (optional — scanning is always free)
 
 ---
 
@@ -33,7 +34,7 @@ The hub launcher opens. Click either card to open the tool.
 
 ## Tool 1 — SOLID Review
 
-> *Scans your C# scripts for SOLID principle violations and generates AI-powered fixes.*
+> *Scans your C# scripts for SOLID principle violations and opens Claude Code to apply fixes.*
 
 ### What it checks
 
@@ -62,31 +63,34 @@ Each file gets a score of **1–5 per principle** based on the GD Easy Rating Gu
 - **Sidebar** — all scanned files with per-file violation count and colour-coded severity
 - **Detail panel** — exact line number, which rule is broken, and why
 - **Principle badges** — SRP · OCP · LSP · ISP pills in the top bar
+- **Skip** — mark a violation as intentionally ignored
+- **⬇ File Doc** — export a Word report for the current file
 
-### AI Fix Generation
+### Fixing violations — Claude Code
 
-With a Claude API key set, each violation gets a **Generate Fix** button:
+All violations are fixed via Claude Code — there is no in-tool Generate Fix button. Claude Code reads your full project before applying changes, which gives far better results than single-file API calls.
 
-1. Claude reads the violating code in context
-2. Proposes a refactored version with an explanation
-3. You review the diff before applying anything
-4. A **Behavioural Contract Check** runs automatically — verifies all public methods are preserved before applying
-5. After applying, a **Regression Test** compares behaviour before and after
+Each violation shows two buttons:
 
-> Cost confirmation is shown before every API call — no surprise charges.
+| Button | What it does |
+|---|---|
+| **📋 Copy Prompt** | Copies a pre-built prompt to clipboard — paste it into Claude Code manually |
+| **🚀 Run in Tool** | Opens Terminal and launches Claude Code in your project automatically |
+
+Clicking **Run in Tool** shows a pre-flight checklist:
+
+- Claude Code CLI must be installed: `npm install -g @anthropic-ai/claude-code`
+- Node.js 18+ required
+- Anthropic account required — fixes are billed to your account (~$0.01–$0.05 per fix via Claude Sonnet)
+
+> Scanning is always free. Claude Code usage is billed separately to your Anthropic account — not to this tool.
 
 ### Word Doc Export
 
 - **Project Report** — full summary report across all scanned files with scores, principle ratings, and violation breakdown
 - **File Report** — per-file detailed report matching the GD SOLID Review format: Scores at a Glance table, per-principle problem breakdown, What to Fix table, and priority list — ready to share directly with a developer
 
-> Requires Node.js installed on the machine. The `docx` package is bundled inside the tool — no `npm install` needed.
-
-### Settings
-
-- API key stored in `EditorPrefs` — never committed to source control
-- Scan root persists between sessions
-- SDK files auto-excluded from scanning (Adjust, AppMetrica, MaxSdk, Firebase, etc.)
+> Requires Node.js installed on the machine. The `docx` package is bundled inside `DocxGen/node_modules/` — no `npm install` needed.
 
 ---
 
@@ -161,10 +165,6 @@ The Ad Units tab only scans networks you selected during setup. If you unchecked
 
 Each item has a **✓ Confirm** button — tap it after verifying on device. Confirmed items turn green. Use **↺ Undo** to unconfirm if needed.
 
-### JSON Import
-
-Paste your expected SDK config JSON on the home screen to compare live project values against an expected config. Useful for catching drift between what was agreed and what was actually implemented.
-
 ### Rescan and reset
 
 - **↺ Rescan** — reruns the full scan without leaving the results view
@@ -186,13 +186,19 @@ The hub (`Tools → GD CodeShield`) is a fixed 640×420 launcher window:
 ## Changelog
 
 ### [1.0.7]
-- **Word Doc export replaces PDF export** — reports now generate `.docx` files matching the GD SOLID Review format exactly (dark theme, GD yellow headings, proper tables — no coordinate math, no overlapping text)
-- Per-file report: Scores at a Glance table, per-principle problem breakdown with full description and evidence, What to Fix table with detailed guidance, and a priority page sorted by severity
-- Project summary report: stats row, overall score, principle cards, violation breakdown page
-- `docx` npm package bundled inside `DocxGen/node_modules/` — no global install required on developer machines
-- Node.js executable resolved via explicit path search (nvm, Homebrew, `/usr/local/bin`) — fixes export failures when Unity launches without a full shell PATH
-- Fix export error messages now word-wrap in the UI so the full error is always readable
-- **Folder picker scroll fixed** — file browser no longer shows a massive empty scroll area; content height calculated dynamically from actual folder tree
+- **Claude Code is now the only fix path** — Generate Fix (API key, in-tool diff, Apply Fix) removed entirely. All violations use Copy Prompt or Run in Tool via Claude Code CLI
+- **Run in Tool pre-flight dialog** — shows required installs (Claude Code CLI, Node.js 18+, Anthropic account) and cost estimate before launching Terminal
+- **API key removed from UI** — no key pill, no Settings panel, no EditorPrefs storage. Scanning and Claude Code work without any key in this tool
+- **Apply Fix and View Full Code removed** — no longer needed without in-tool fix generation
+- **Window opens at Hub size (640×420)** — SOLID Review home screen matches Hub launcher. Expands to 980×600 when scan starts, shrinks back on Rescan
+- **Window opens on top of Hub** — positioned over the Hub window when launched from it
+- **Folder picker expands window** — window grows to 780px tall when folder picker is open, returns to 520px on close
+- **Word Doc export replaces PDF export** — reports now generate `.docx` files matching the GD SOLID Review format exactly
+- Per-file report: Scores at a Glance table, per-principle breakdown, What to Fix table, priority list
+- Project summary report: stats row, overall score, principle cards, violation breakdown
+- `docx` npm package bundled inside `DocxGen/node_modules/` — no global install required
+- Node.js path resolved via explicit search (nvm, Homebrew, `/usr/local/bin`) — fixes export failures when Unity launches without a full shell PATH
+- Folder picker scroll fixed — content height calculated dynamically from actual folder tree
 
 ### [2.0.0]
 - **GD Checklist completely overhauled** — merged SDK key validation with full release checklist
