@@ -185,7 +185,7 @@ The hub (`Tools → GD CodeShield`) is a fixed 640×420 launcher window:
 
 ## Changelog
 
-### [1.0.7]
+### [1.0.8]
 - **Claude Code is now the only fix path** — Generate Fix (API key, in-tool diff, Apply Fix) removed entirely. All violations use Copy Prompt or Run in Tool via Claude Code CLI
 - **Run in Tool pre-flight dialog** — shows required installs (Claude Code CLI, Node.js 18+, Anthropic account) and cost estimate before launching Terminal
 - **API key removed from UI** — no key pill, no Settings panel, no EditorPrefs storage. Scanning and Claude Code work without any key in this tool
@@ -200,7 +200,7 @@ The hub (`Tools → GD CodeShield`) is a fixed 640×420 launcher window:
 - Node.js path resolved via explicit search (nvm, Homebrew, `/usr/local/bin`) — fixes export failures when Unity launches without a full shell PATH
 - Folder picker scroll fixed — content height calculated dynamically from actual folder tree
 
-### [1.0.6]
+### [1.0.7]
 - **GD Checklist completely overhauled** — merged SDK key validation with full release checklist
 - Added Pre-Release tab: app version, bundle code, GraphicsAPI, Unity Services, Firebase files, Adjust environment, AppLovin flags, AppMetrica auto-collection
 - Added Build tab: symbols public, LZ4HC compression
