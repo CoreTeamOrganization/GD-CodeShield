@@ -200,7 +200,7 @@ The hub (`Tools → GD CodeShield`) is a fixed 640×420 launcher window:
 - Node.js path resolved via explicit search (nvm, Homebrew, `/usr/local/bin`) — fixes export failures when Unity launches without a full shell PATH
 - Folder picker scroll fixed — content height calculated dynamically from actual folder tree
 
-### [2.0.0]
+### [1.0.6]
 - **GD Checklist completely overhauled** — merged SDK key validation with full release checklist
 - Added Pre-Release tab: app version, bundle code, GraphicsAPI, Unity Services, Firebase files, Adjust environment, AppLovin flags, AppMetrica auto-collection
 - Added Build tab: symbols public, LZ4HC compression
