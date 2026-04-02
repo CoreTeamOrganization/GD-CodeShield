@@ -278,7 +278,7 @@ namespace GDCodeShield
 
             float leftX  = cx - gap * 0.5f - cardW;
             float rightX = cx + gap * 0.5f;
-            float cardY  = bodyY + (bodyH - cardH) * 0.5f;
+            float cardY  = bodyY + (bodyH - cardH) * 0.5f - 18f; // shift up to make room for disclaimer
 
             // Animate pulse on hover
             _solidPulse  = Mathf.Lerp(_solidPulse,  _hoverCard == 0 ? 1f : 0f, 0.18f);
@@ -287,14 +287,40 @@ namespace GDCodeShield
             DrawToolCard(new Rect(leftX,  cardY, cardW, cardH), 0,
                 true, "SOLID REVIEW",
                 "Scans C# scripts for\nSRP · OCP · LSP · ISP\nviolations and generates\nAI-powered fixes.",
-                new Color32(255, 211, 0, 255),   // yellow accent
+                new Color32(255, 211, 0, 255),
                 _solidPulse);
 
             DrawToolCard(new Rect(rightX, cardY, cardW, cardH), 1,
                 false, "SDK CHECKLIST",
                 "Verifies all SDK keys,\nApp IDs and network\nconfiguration across\nyour project.",
-                new Color32(80, 200, 100, 255),  // green accent
+                new Color32(80, 200, 100, 255),
                 _checkPulse);
+
+            // ── AI Disclaimer ─────────────────────────────────────────────────
+            float disclaimerY = cardY + cardH + 14f;
+            float disclaimerW = cardW * 2 + gap;
+            float disclaimerX = leftX;
+
+            // Solid dark backing so it reads clearly over the game icon wallpaper
+            EditorGUI.DrawRect(new Rect(disclaimerX, disclaimerY, disclaimerW, 30),
+                new Color(0.06f, 0.06f, 0.06f, 0.96f));
+            // Left accent bar
+            EditorGUI.DrawRect(new Rect(disclaimerX, disclaimerY, 3, 30), C_ACCENT);
+            // Top/bottom hairlines
+            EditorGUI.DrawRect(new Rect(disclaimerX, disclaimerY,       disclaimerW, 1),
+                new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.35f));
+            EditorGUI.DrawRect(new Rect(disclaimerX, disclaimerY + 29,  disclaimerW, 1),
+                new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.35f));
+
+            GUI.Label(
+                new Rect(disclaimerX + 10, disclaimerY + 7, disclaimerW - 14, 16),
+                "⚠  AI-Powered — Results and suggestions may contain errors. Always review before applying.",
+                new GUIStyle(_sMuted)
+                {
+                    fontSize  = 9,
+                    fontStyle = FontStyle.Bold,
+                    normal    = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 1f) }
+                });
 
             // Track hover
             var e = Event.current;
@@ -306,7 +332,6 @@ namespace GDCodeShield
             if (checkR.Contains(e.mousePosition)) newHover = 1;
             if (newHover != _hoverCard) { _hoverCard = newHover; Repaint(); }
 
-            // Click handling
             if (e.type == EventType.MouseDown)
             {
                 if (solidR.Contains(e.mousePosition)) { e.Use(); LaunchSolidReview(); }
@@ -408,7 +433,6 @@ namespace GDCodeShield
                 });
         }
 
-        // ── Footer ────────────────────────────────────────────────────────────────
         private void DrawFooter()
         {
             float w  = position.width;
@@ -421,11 +445,30 @@ namespace GDCodeShield
                 new GUIStyle(_sMuted) { fontSize = 8,
                     normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.45f) } });
 
+            // Feedback button
+            float fbW = 110f;
+            var fbBtn = new Rect(w * 0.5f - fbW * 0.5f, fy + 6, fbW, 22);
+            bool fbHover = fbBtn.Contains(Event.current.mousePosition);
+            EditorGUI.DrawRect(fbBtn, new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, fbHover ? 0.18f : 0.08f));
+            EditorGUI.DrawRect(new Rect(fbBtn.x, fbBtn.y, fbBtn.width, 1), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
+            EditorGUI.DrawRect(new Rect(fbBtn.x, fbBtn.yMax - 1, fbBtn.width, 1), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
+            EditorGUI.DrawRect(new Rect(fbBtn.x, fbBtn.y, 1, fbBtn.height), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
+            EditorGUI.DrawRect(new Rect(fbBtn.xMax - 1, fbBtn.y, 1, fbBtn.height), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
+            GUI.Label(fbBtn, "✉  Contact Support",
+                new GUIStyle(_sMuted) { fontSize = 9, alignment = TextAnchor.MiddleCenter,
+                    normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, fbHover ? 1f : 0.7f) } });
+            if (Event.current.type == EventType.MouseDown && fbBtn.Contains(Event.current.mousePosition))
+            {
+                Event.current.Use();
+                ContactSupportWindow.Open();
+            }
+
             GUI.Label(new Rect(0, fy + 7, w - 14, 18), "⚡ GAME DISTRICT",
                 new GUIStyle(_sTitle) { fontSize = 10, fontStyle = FontStyle.Bold,
                     alignment = TextAnchor.MiddleRight,
                     normal    = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.65f) } });
         }
+
 
         // ════════════════════════════════════════════════════════════════════════
         //  LAUNCHERS

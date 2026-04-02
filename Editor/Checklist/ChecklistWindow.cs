@@ -51,6 +51,7 @@ namespace GDChecklist
         {
             var w = GetWindow<ChecklistWindow>("  GD Checklist");
             w.minSize = new Vector2(900, 560);
+            w._appScreen = AppScreen.Welcome;   // always start fresh
             w.Show();
         }
 
@@ -60,22 +61,14 @@ namespace GDChecklist
         private void OnEnable()
         {
             _stylesReady = false;
+            _appScreen   = AppScreen.Welcome;   // always reset to welcome on open — no cached scan state
 
-            // If stored version differs from current — wipe old prefs and show welcome
+            // If stored version differs — wipe old prefs
             string storedVersion = EditorPrefs.GetString(VERSION_PREF_KEY, "");
             if (storedVersion != TOOL_VERSION)
             {
                 SDKConfig.ResetSetup();
                 EditorPrefs.SetString(VERSION_PREF_KEY, TOOL_VERSION);
-                _appScreen = AppScreen.Welcome;
-            }
-            else if (!SDKConfig.IsSetupDone || !EditorPrefs.HasKey("GDChecklist_IsGDSDK"))
-            {
-                _appScreen = AppScreen.Welcome;
-            }
-            else
-            {
-                _appScreen = AppScreen.Home;
             }
 
             // Pre-fill temp toggles from saved state
@@ -175,7 +168,8 @@ namespace GDChecklist
         {
             float cx = body.x + body.width / 2f;
             float cy = body.y + body.height / 2f;
-            float cw = 480f, ch = 280f;
+            bool isNonGD = !SDKConfig.BuildScanConfig().IsGDSDK;
+            float cw = 480f, ch = isNonGD ? 340f : 280f;
 
             Bg(new Rect(cx - cw/2 - 5, cy - ch/2 - 5, cw + 10, ch + 10), C_ACCENT);
             var card = new Rect(cx - cw/2, cy - ch/2, cw, ch);
@@ -201,6 +195,23 @@ namespace GDChecklist
 
             Bg(new Rect(card.x + 20, iy, cw - 40, 1),
                new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f)); iy += 14;
+
+            // Non-GD scan warning
+            if (!SDKConfig.BuildScanConfig().IsGDSDK)
+            {
+                var warnRect = new Rect(card.x + 20, iy, cw - 40, 52);
+                EditorGUI.DrawRect(warnRect, new Color(C_ORANGE.r, C_ORANGE.g, C_ORANGE.b, 0.08f));
+                EditorGUI.DrawRect(new Rect(warnRect.x, warnRect.y, 3, warnRect.height), C_ORANGE);
+                GUI.Label(new Rect(warnRect.x + 10, warnRect.y + 6, warnRect.width - 14, 14),
+                    "⚠  Extensive scan — reads all .cs files in project",
+                    new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
+                        normal = { textColor = C_ORANGE } });
+                GUI.Label(new Rect(warnRect.x + 10, warnRect.y + 22, warnRect.width - 14, 28),
+                    "Non-GD SDK mode scans your entire codebase to reverse engineer\nSDK configuration. May take 5-15 seconds on large projects.",
+                    new GUIStyle(_sMuted) { fontSize = 9, wordWrap = true,
+                        normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.8f) } });
+                iy += 60;
+            }
 
             // Scan button
             var btnR = new Rect(card.x + 20, iy, cw - 40, 44);
@@ -313,9 +324,10 @@ namespace GDChecklist
                 bool isManual = f.YamlKey == "manual";
                 bool isRelease = f.Tab == GDChecklist.ReleaseScanner.TAB_PRERELEASE
                               || f.Tab == GDChecklist.ReleaseScanner.TAB_BUILD;
+                bool editingMissing = editing && (f.Status == FieldStatus.Missing || isEmpty);
                 float rh = isManual ? 54f
                          : isRelease ? (f.Status == FieldStatus.Mismatch || f.Status == FieldStatus.Missing ? 66f : 54f)
-                         : (editing ? 60f : f.Status == FieldStatus.Mismatch ? 72f : isEmpty ? 60f : 36f);
+                         : (editingMissing ? 72f : editing ? 60f : f.Status == FieldStatus.Mismatch ? 72f : (f.Status == FieldStatus.Missing || isEmpty) ? 60f : 36f);
                 contentH += rh + 4f;
             }
             contentH += 32; // bottom padding
@@ -392,9 +404,11 @@ namespace GDChecklist
                         : "—";
 
             // Row height: mismatch = 72, empty = 60 (has paste field), editing = 60, default = 36
-            float rowH = editing ? 60f
+            bool editingMissing = _editingFieldKey == FieldKey(f) && (f.Status == FieldStatus.Missing || isEmpty);
+            float rowH = editingMissing ? 72f
+                       : editing ? 60f
                        : f.Status == FieldStatus.Mismatch ? 72f
-                       : isEmpty ? 60f
+                       : (f.Status == FieldStatus.Missing || isEmpty) ? 60f
                        : 36f;
 
             Bg(new Rect(x, y, w, rowH), editing ? new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.06f) : rowBg);
@@ -456,43 +470,73 @@ namespace GDChecklist
                     Repaint();
                 }
             }
-            // ── Empty — file not found or key is blank (external dev, read-only) ──
-            else if (isEmpty)
+            // ── Not found / empty — offer locate, paste, or rescan ───────────────
+            else if (isEmpty || f.Status == FieldStatus.Missing)
             {
-                // Tell them exactly what we looked for and where
-                string hint = string.IsNullOrEmpty(f.AssetPath)
-                    ? $"File not found in project  —  looking for: {f.YamlKey} in {f.FieldName} asset"
-                    : $"Key '{f.YamlKey}' is empty in {System.IO.Path.GetFileName(f.AssetPath)}";
+                bool editingThis = _editingFieldKey == FieldKey(f);
 
-                GUI.Label(new Rect(x + 30, y + 24, w - 180, 14), hint,
-                    new GUIStyle(_sMuted) { fontSize = 10,
-                        normal = { textColor = C_ORANGE } });
-
-                // Locate File button — lets them browse to the asset
-                if (Btn(new Rect(x + w - 148, y + 24, 96, 22), "📂  Locate File", C_ORANGE))
+                if (!editingThis)
                 {
-                    string located = EditorUtility.OpenFilePanel(
-                        $"Locate asset file for {f.FieldName}",
-                        Application.dataPath, "asset");
+                    // Hint line
+                    string hint = f.Status == FieldStatus.Missing
+                        ? "Not found — locate the .asset or .cs file, or paste the value directly"
+                        : $"Key '{f.YamlKey}' is empty in {System.IO.Path.GetFileName(f.AssetPath)}";
+                    GUI.Label(new Rect(x + 30, y + 24, w - 270, 14), hint,
+                        new GUIStyle(_sMuted) { fontSize = 10, normal = { textColor = C_ORANGE } });
 
-                    if (!string.IsNullOrEmpty(located) && System.IO.File.Exists(located))
+                    // 📂 Locate File — browse to .asset or .cs file
+                    if (Btn(new Rect(x + w - 264, y + 24, 96, 22), "📂  Locate File", C_ORANGE))
                     {
-                        // Read the key from the located file
-                        string foundValue = AssetScanner.ReadYamlKey(located, f.YamlKey);
-                        f.AssetPath   = located;
-                        f.ProjectValue = foundValue;
-                        f.Status = string.IsNullOrEmpty(foundValue)
-                            ? FieldStatus.Missing   // file found but key still empty
-                            : FieldStatus.Match;    // found and has a value — show it
+                        string located = EditorUtility.OpenFilePanel(
+                            $"Locate file for {f.FieldName}",
+                            Application.dataPath, "asset,cs");
+                        if (!string.IsNullOrEmpty(located) && System.IO.File.Exists(located))
+                        {
+                            string ext = System.IO.Path.GetExtension(located).ToLower();
+                            string foundValue = ext == ".cs"
+                                ? AssetScanner.ReadCsValue(located, f.YamlKey)
+                                : AssetScanner.ReadYamlKey(located, f.YamlKey);
+                            f.AssetPath    = located;
+                            f.ProjectValue = foundValue;
+                            f.Status = string.IsNullOrEmpty(foundValue)
+                                ? FieldStatus.Missing : FieldStatus.Match;
+                            Repaint();
+                        }
+                    }
+
+                    // ✎ Enter Value — paste from code
+                    if (Btn(new Rect(x + w - 162, y + 24, 100, 22), "✎  Enter Value", C_ORANGE))
+                    {
+                        _editingFieldKey = FieldKey(f);
+                        _editBuffer = f.ProjectValue ?? "";
                         Repaint();
                     }
-                }
 
-                // Rescan button — in case they just added the SDK
-                if (Btn(new Rect(x + w - 46, y + 24, 36, 22), "↺", C_MUTED))
+                    // ↺ Rescan
+                    if (Btn(new Rect(x + w - 56, y + 24, 46, 22), "↺", C_MUTED))
+                    { _scan = null; RunScan(); }
+                }
+                else
                 {
-                    _scan = null;
-                    RunScan();
+                    GUI.Label(new Rect(x + 30, y + 24, w - 160, 14),
+                        "Paste the value from your file or script:",
+                        new GUIStyle(_sMuted) { fontSize = 10, normal = { textColor = C_ORANGE } });
+
+                    _editBuffer = EditorGUI.TextField(
+                        new Rect(x + 30, y + 42, w - 140, 22), _editBuffer);
+
+                    if (Btn(new Rect(x + w - 104, y + 42, 46, 22), "Save", C_GREEN))
+                    {
+                        if (!string.IsNullOrWhiteSpace(_editBuffer))
+                        {
+                            f.ProjectValue = _editBuffer.Trim();
+                            f.Status = FieldStatus.Match;
+                        }
+                        _editingFieldKey = null;
+                        Repaint();
+                    }
+                    if (Btn(new Rect(x + w - 52, y + 42, 46, 22), "✕", C_MUTED))
+                    { _editingFieldKey = null; Repaint(); }
                 }
             }
             else if (f.Status == FieldStatus.Match)
@@ -519,12 +563,6 @@ namespace GDChecklist
                     ApplyValue(f, useExpected: true);
                 if (Btn(new Rect(x + w - 108, y + 24, 96, 22), "Keep Existing", C_MUTED))
                 { f.Status = FieldStatus.Ignored; Repaint(); }
-            }
-            else if (f.Status == FieldStatus.Missing)
-            {
-                GUI.Label(new Rect(x + 30, y + 24, w - 100, 14),
-                    "Asset file not found in project",
-                    new GUIStyle(_sMuted) { fontSize = 10, normal = { textColor = C_ORANGE } });
             }
 
             y += rowH + 4;
@@ -874,12 +912,16 @@ namespace GDChecklist
 
         private void RunScan()
         {
-            var config = SDKConfig.BuildScanConfig();
-            _scan = AssetScanner.Scan(Application.dataPath, null, config);
-            // Append release + manual checks to same ScanResult
-            GDChecklist.ReleaseScanner.AppendChecks(_scan, Application.dataPath);
+            var config   = SDKConfig.BuildScanConfig();
+            var dataPath = Application.dataPath;
+
+            // Progress bar is handled inside AssetScanner.Scan for non-GD projects
+            var result = AssetScanner.Scan(dataPath, null, config);
+            GDChecklist.ReleaseScanner.AppendChecks(result, dataPath);
+            _scan      = result;
+            _scanning  = false;
             _confirmed.Clear();
-            _tab  = 0;
+            _tab       = 0;
             _appScreen = AppScreen.Results;
             Repaint();
         }
