@@ -33,7 +33,7 @@ All notable changes to GD CodeShield are documented here.
 - Node.js path resolved via explicit search (nvm, Homebrew, /usr/local/bin)
 - Folder picker scroll fixed
 
-## [2.0.0] - 2025-12-01
+## [1.0.6] - 2025-12-01
 ### Added
 - GD Checklist completely overhauled — merged SDK key validation with full release checklist
 - Pre-Release tab: app version, bundle code, GraphicsAPI, Unity Services, Firebase files, Adjust environment, AppLovin flags, AppMetrica auto-collection
@@ -47,27 +47,22 @@ All notable changes to GD CodeShield are documented here.
 - AssetScanner falls back to broad project search if asset not at expected GD path
 - System.Linq missing from SDKConfig.cs
 
-## [1.0.4] - 2025-10-01
+## [1.0.5] - 2025-10-01
 ### Changed
 - Hub background updated to GD logo charcoal (#3A3A3A)
 
-## [1.0.3] - 2025-09-01
+## [1.0.2] - 2025-09-01
 ### Changed
 - Version badge reads live from PackageManager
 - Hub title: "GD" in yellow, "CODESHIELD" in white
-
-## [1.0.2] - 2025-08-01
-### Changed
-- Card icons redrawn as pure IMGUI vector shapes
-- SOLID Review card: shield outline with S letterform
-- GD Checklist card: checklist with tick marks
-
-## [1.0.1] - 2025-07-01
-### Added
-- Card icons for both tools
 
 ## [1.0.0] - 2025-06-01
 ### Added
 - Initial release — GD SOLID Review and GD Checklist
 - GD CodeShield hub launcher (Tools → GD CodeShield)
 - Single UPM package com.gamedistrict.codeshield
+- Card icons for both tools
+- Card icons redrawn as pure IMGUI vector shapes
+- SOLID Review card: shield outline with S letterform
+- GD Checklist card: checklist with tick marks
+
