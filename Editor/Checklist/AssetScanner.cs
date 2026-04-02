@@ -32,6 +32,7 @@ namespace GDChecklist
         public List<FieldResult> AllFields    { get; set; } = new();
         public string            ScannedRoot  { get; set; }
         public System.DateTime   ScannedAt    { get; set; }
+        public List<string>      AllAssets    { get; set; } = new(); // cached asset list for ReleaseScanner
     }
 
     // Which SDKs to scan — passed from the setup screen selection
@@ -127,6 +128,8 @@ namespace GDChecklist
                 EditorUtility.ClearProgressBar();
             }
 
+            // Pass allAssets so ReleaseScanner doesn't re-scan the filesystem
+            result.AllAssets = allAssets;
             return result;
         }
 

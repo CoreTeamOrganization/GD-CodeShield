@@ -28,6 +28,8 @@ namespace GDChecklist
             string settingsPath = Path.Combine(projectPath, "ProjectSettings", "ProjectSettings.asset");
             string yaml         = File.Exists(settingsPath) ? File.ReadAllText(settingsPath) : string.Empty;
 
+            // Uses result.AllAssets — collected once by AssetScanner, avoids re-scanning filesystem
+
             // ── PRE-RELEASE CHECKS ────────────────────────────────────────────
             CheckAppVersion(result, yaml);
             CheckBundleCode(result, yaml);
@@ -178,8 +180,8 @@ namespace GDChecklist
 
         static void CheckAdjustEnvironment(ScanResult r, string dataPath)
         {
-            string asset = FindAssetByName(dataPath, "AdjustToken")
-                        ?? FindAssetContaining(dataPath, "environment:");
+            string asset = FindAssetByName(r.AllAssets, "AdjustToken")
+                        ?? FindAssetContaining(r.AllAssets, "environment:");
 
             if (asset == null)
             {
@@ -202,7 +204,7 @@ namespace GDChecklist
 
         static void CheckAppLovinMaxTerms(ScanResult r, string dataPath)
         {
-            string asset = FindAssetByName(dataPath, "AppLovinSettings");
+            string asset = FindAssetByName(r.AllAssets, "AppLovinSettings");
             if (asset == null) return;
 
             string content = File.ReadAllText(asset);
@@ -217,7 +219,7 @@ namespace GDChecklist
 
         static void CheckAppLovinAdReview(ScanResult r, string dataPath)
         {
-            string asset = FindAssetByName(dataPath, "AppLovinSettings");
+            string asset = FindAssetByName(r.AllAssets, "AppLovinSettings");
             if (asset == null) return;
 
             string content = File.ReadAllText(asset);
@@ -232,8 +234,8 @@ namespace GDChecklist
 
         static void CheckAppMetricaSettings(ScanResult r, string dataPath)
         {
-            string asset = FindAssetByName(dataPath, "AppMetricaSettings")
-                        ?? FindAssetByName(dataPath, "YandexMetricaSettings");
+            string asset = FindAssetByName(r.AllAssets, "AppMetricaSettings")
+                        ?? FindAssetByName(r.AllAssets, "YandexMetricaSettings");
 
             if (asset == null)
             {
@@ -344,19 +346,24 @@ namespace GDChecklist
             catch { return null; }
         }
 
-        static string FindAssetByName(string root, string name)
+        // Use cached asset list — O(n) list search instead of filesystem traversal
+        static string FindAssetByName(List<string> assets, string name)
         {
-            try { return Directory.GetFiles(root, $"{name}.asset", SearchOption.AllDirectories)
-                    .Select(f => f.Replace('\\', '/')).FirstOrDefault(); }
-            catch { return null; }
+            if (assets != null)
+                return assets.FirstOrDefault(a =>
+                    System.IO.Path.GetFileNameWithoutExtension(a)
+                        .Equals(name, System.StringComparison.OrdinalIgnoreCase));
+            return null;
         }
 
-        static string FindAssetContaining(string root, string key)
+        static string FindAssetContaining(List<string> assets, string key)
         {
-            try { return Directory.GetFiles(root, "*.asset", SearchOption.AllDirectories)
-                    .Select(f => f.Replace('\\', '/'))
-                    .FirstOrDefault(f => { try { return File.ReadAllText(f).Contains(key); } catch { return false; } }); }
-            catch { return null; }
+            if (assets != null)
+                return assets.FirstOrDefault(a =>
+                {
+                    try { return File.ReadAllText(a).Contains(key); } catch { return false; }
+                });
+            return null;
         }
     }
 }
