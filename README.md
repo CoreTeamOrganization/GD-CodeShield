@@ -159,35 +159,11 @@ The Ad Units tab only scans networks you selected during setup. If you unchecked
 
 Each item has a **✓ Confirm** button — tap it after verifying on device. Confirmed items turn green. Use **↺ Undo** to unconfirm if needed.
 
-### JSON Import
-
-Paste your expected SDK config JSON on the home screen to compare live project values against an expected config. Useful for catching drift between what was agreed and what was actually implemented.
-
 ### Rescan and reset
 
 - **↺ Rescan** — reruns the full scan without leaving the results view
 - **⚙ Change Setup** — resets SDK selection if your project's stack changes
 
----
-
-## Hub Launcher
-
-The hub (`Tools → GD CodeShield`) is a fixed 640×420 launcher window:
-
-- Game icon wallpaper loaded async from `gamedistrict.co` (16 icons, parallel, 8s timeout — silent fallback if offline)
-- Animated cards — hover to see glow, underline expansion, and button fill
-- Dynamic version badge reads live from PackageManager — always shows the installed version
-- Yellow card = SOLID Review · Green card = GD Checklist
-
----
-
-## Contact & Support
-
-Found a bug, have a question, or want to suggest a feature? Use the built-in **Contact Support** button in the Hub footer:
-
-`Tools → GD CodeShield → Contact Support (footer)`
-
-Type your subject and message (up to 1000 characters) and click **Send Message**. Your message is sent directly to the GD CodeShield team — no email client required.
 
 ---
 ## Changelog
