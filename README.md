@@ -11,7 +11,7 @@ GD CodeShield is Game District's internal Unity editor toolkit that catches code
 In Unity: `Window → Package Manager → + → Add package from git URL`
 
 ```
-https://github.com/GameDistrict/gd-codeshield.git#2.0.0
+https://github.com/CoreTeamOrganization/GD-CodeShield.git
 ```
 
 **Requirements:**
