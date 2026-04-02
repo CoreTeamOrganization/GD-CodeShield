@@ -15,6 +15,8 @@ namespace GDChecklist
         // ── Tabs ─────────────────────────────────────────────────────────────────
         private static readonly string[] Tabs = { "AppLovin / AdMob", "Metica", "Adjust", "AppMetrica", "Firebase", "Ad Units", "Pre-Release", "Build", "Manual" };
         private int _tab = 0;
+        private SDKScanConfig _homeConfig  = null; // cached per screen-switch, not per frame
+        private bool          _transitioning = false; // shows loading flash on screen change
 
         // ── Scroll ────────────────────────────────────────────────────────────────
         private Vector2 _scroll;
@@ -78,6 +80,21 @@ namespace GDChecklist
             _tmp_AppMetrica = SDKConfig.ManualAppMetrica;
             _tmp_Firebase   = SDKConfig.ManualFirebase;
             _tmp_AdUnits    = SDKConfig.ManualAdUnits;
+
+            // Pre-build the SDK config cache in the background while the user reads the welcome screen.
+            // By the time any button is tapped, _cachedConfig is already populated — DrawHome is instant.
+            var dataPath = Application.dataPath;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    // Warm OS filesystem cache
+                    Directory.GetFiles(dataPath, "*.asset", SearchOption.AllDirectories);
+                    // Pre-build the config — SDKConfig.BuildScanConfig() is thread-safe for reads
+                    SDKConfig.PrebuildConfigCache();
+                }
+                catch { /* silent — best-effort only */ }
+            });
         }
 
         // ════════════════════════════════════════════════════════════════════════
@@ -88,6 +105,17 @@ namespace GDChecklist
         {
             InitStyles();
             Bg(new Rect(0, 0, position.width, position.height), C_BG);
+
+            // If we're mid-transition, show a loading overlay for exactly one frame,
+            // then clear the flag and draw the real screen next frame.
+            // This gives instant visual feedback on any button tap.
+            if (_transitioning)
+            {
+                _transitioning = false;
+                DrawTransitionOverlay();
+                Repaint(); // immediately queue the real screen
+                return;
+            }
 
             DrawTopBar();
 
@@ -101,6 +129,38 @@ namespace GDChecklist
                 case AppScreen.Home:    DrawHome(body);          break;
                 case AppScreen.Results: DrawResults(body);       break;
             }
+        }
+
+        private void DrawTransitionOverlay()
+        {
+            float w = position.width;
+            float h = position.height;
+
+            // Dark overlay
+            EditorGUI.DrawRect(new Rect(0, 0, w, h), new Color(0.06f, 0.06f, 0.06f, 0.96f));
+
+            // Centered loading indicator
+            float barW = 220f;
+            float barH = 3f;
+            float bx   = (w - barW) * 0.5f;
+            float by   = h * 0.5f + 20f;
+
+            // Label
+            GUI.Label(new Rect(0, h * 0.5f - 16f, w, 20f),
+                "Loading…",
+                new GUIStyle(EditorStyles.label)
+                {
+                    fontSize  = 11,
+                    alignment = TextAnchor.MiddleCenter,
+                    normal    = { textColor = new Color(0.9f, 0.9f, 0.9f, 0.6f) }
+                });
+
+            // Thin animated accent bar
+            EditorGUI.DrawRect(new Rect(bx, by, barW, barH),
+                new Color(0.3f, 0.3f, 0.3f, 0.4f));
+            float fill = (float)(EditorApplication.timeSinceStartup % 1.0);
+            EditorGUI.DrawRect(new Rect(bx, by, barW * fill, barH),
+                new Color(1f, 0.83f, 0f, 0.9f)); // GD yellow
         }
 
         // ── Top bar ───────────────────────────────────────────────────────────────
@@ -139,7 +199,7 @@ namespace GDChecklist
             if (_appScreen == AppScreen.Results)
             {
                 if (TopBtn(new Rect(rx - 82, 11, 74, 28), "↺  Rescan"))
-                { _scan = null; _appScreen = AppScreen.Home; Repaint(); }
+                { _scan = null; _homeConfig = null; _appScreen = AppScreen.Home; Repaint(); }
                 rx -= 90;
             }
 
@@ -166,9 +226,12 @@ namespace GDChecklist
 
         private void DrawHome(Rect body)
         {
+            // Build config once per screen visit — never per frame
+            if (_homeConfig == null) _homeConfig = SDKConfig.BuildScanConfig();
+
             float cx = body.x + body.width / 2f;
             float cy = body.y + body.height / 2f;
-            bool isNonGD = !SDKConfig.BuildScanConfig().IsGDSDK;
+            bool isNonGD = !_homeConfig.IsGDSDK;
             float cw = 480f, ch = isNonGD ? 340f : 280f;
 
             Bg(new Rect(cx - cw/2 - 5, cy - ch/2 - 5, cw + 10, ch + 10), C_ACCENT);
@@ -197,7 +260,7 @@ namespace GDChecklist
                new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f)); iy += 14;
 
             // Non-GD scan warning
-            if (!SDKConfig.BuildScanConfig().IsGDSDK)
+            if (!_homeConfig.IsGDSDK)
             {
                 var warnRect = new Rect(card.x + 20, iy, cw - 40, 52);
                 EditorGUI.DrawRect(warnRect, new Color(C_ORANGE.r, C_ORANGE.g, C_ORANGE.b, 0.08f));
@@ -241,10 +304,10 @@ namespace GDChecklist
 
         private void DrawResults(Rect body)
         {
-            if (_scan == null) { _appScreen = AppScreen.Home; return; }
+            if (_scan == null) { _homeConfig = null; _appScreen = AppScreen.Home; return; }
 
             // Build active tab list from current scan config
-            var cfg = SDKConfig.BuildScanConfig();
+            var cfg = _homeConfig ?? SDKConfig.BuildScanConfig();
             var activeTabs = new List<(string label, int index)>();
             if (cfg.AppLovin)   activeTabs.Add(("AppLovin / AdMob", 0));
             if (cfg.Metica)     activeTabs.Add(("Metica",           1));
@@ -715,14 +778,15 @@ namespace GDChecklist
             if (Click(yesRect))
             {
                 SDKConfig.IsGDSDK = true;
-                // Pre-tick SDKs based on what we detect in the project
-                // Developer can uncheck anything before confirming
-                _tmp_AppLovin   = SDKConfig.HasAppLovin();
-                _tmp_Metica     = SDKConfig.HasMetica();
-                _tmp_Adjust     = SDKConfig.HasAdjust();
-                _tmp_AppMetrica = SDKConfig.HasAppMetrica();
-                _tmp_Firebase   = SDKConfig.HasFirebase();
-                _tmp_AdUnits    = SDKConfig.HasAdUnits();
+                SDKConfig.InvalidateConfigCache();
+                // Pre-tick using only fast File.Exists checks on known GD paths
+                // No Directory.GetFiles — instant response
+                _tmp_AppLovin   = SDKConfig.HasAppLovinFast();
+                _tmp_Metica     = SDKConfig.HasMeticaFast();
+                _tmp_Adjust     = SDKConfig.HasAdjustFast();
+                _tmp_AppMetrica = SDKConfig.HasAppMetricaFast();
+                _tmp_Firebase   = SDKConfig.HasFirebaseFast();
+                _tmp_AdUnits    = SDKConfig.HasAdUnitsFast();
                 // If nothing detected, tick all so developer sees everything
                 if (!_tmp_AppLovin && !_tmp_Metica && !_tmp_Adjust &&
                     !_tmp_AppMetrica && !_tmp_Firebase && !_tmp_AdUnits)
@@ -730,6 +794,7 @@ namespace GDChecklist
                     _tmp_AppLovin = _tmp_Metica = _tmp_Adjust =
                     _tmp_AppMetrica = _tmp_Firebase = _tmp_AdUnits = true;
                 }
+                _transitioning = true;
                 _appScreen = AppScreen.Setup;
                 Repaint();
             }
@@ -754,8 +819,8 @@ namespace GDChecklist
 
             if (Click(noRect))
             {
-                // Send to SDK picker screen
                 SDKConfig.IsGDSDK = false;
+                _transitioning = true;
                 _appScreen = AppScreen.Setup;
                 Repaint();
             }
@@ -782,6 +847,7 @@ namespace GDChecklist
             // ← Back button — top left of card
             if (Btn(new Rect(card.x + 14, iy, 64, 20), "← Back", C_MUTED))
             {
+                _transitioning = true;
                 _appScreen = AppScreen.Welcome;
                 Repaint();
             }
@@ -857,6 +923,9 @@ namespace GDChecklist
                 SDKConfig.ManualFirebase   = _tmp_Firebase;
                 SDKConfig.ManualAdUnits    = _tmp_AdUnits;
                 SDKConfig.IsSetupDone      = true;
+                SDKConfig.InvalidateConfigCache();
+                _homeConfig = null;
+                _transitioning = true;
                 _appScreen = AppScreen.Home;
                 Repaint();
             }
@@ -912,18 +981,32 @@ namespace GDChecklist
 
         private void RunScan()
         {
-            var config   = SDKConfig.BuildScanConfig();
-            var dataPath = Application.dataPath;
+            ScanProgress.Begin("GD Checklist");
+            try
+            {
+                ScanProgress.Report("Detecting SDKs…", 0.05f);
+                // BuildScanConfigWithProgress shows per-SDK steps — safe here since we're not in OnGUI
+                var config   = SDKConfig.BuildScanConfigWithProgress();
+                var dataPath = Application.dataPath;
 
-            // Progress bar is handled inside AssetScanner.Scan for non-GD projects
-            var result = AssetScanner.Scan(dataPath, null, config);
-            GDChecklist.ReleaseScanner.AppendChecks(result, dataPath);
-            _scan      = result;
-            _scanning  = false;
-            _confirmed.Clear();
-            _tab       = 0;
-            _appScreen = AppScreen.Results;
-            Repaint();
+                ScanProgress.Report("Scanning SDK configurations…", 0.4f);
+                var result = AssetScanner.Scan(dataPath, null, config);
+
+                ScanProgress.Report("Running release checks…", 0.88f);
+                GDChecklist.ReleaseScanner.AppendChecks(result, dataPath);
+
+                ScanProgress.Report("Done", 1f);
+                _scan      = result;
+                _scanning  = false;
+                _confirmed.Clear();
+                _tab       = 0;
+                _appScreen = AppScreen.Results;
+                Repaint();
+            }
+            finally
+            {
+                ScanProgress.End();
+            }
         }
 
         // ════════════════════════════════════════════════════════════════════════

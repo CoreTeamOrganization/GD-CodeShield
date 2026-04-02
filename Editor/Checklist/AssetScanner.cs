@@ -64,20 +64,18 @@ namespace GDChecklist
 
         private static void InitScanCache(string dataPath)
         {
-            EditorUtility.DisplayProgressBar("GD Checklist", "Indexing project files…", 0.1f);
+            ScanProgress.Report("Indexing project files…", 0.1f);
             _cachedCsFiles  = Directory.GetFiles(dataPath, "*.cs", SearchOption.AllDirectories);
             _cachedContents = new Dictionary<string, string>(_cachedCsFiles.Length);
-            // Pre-read all .cs files once — subsequent reads are instant dictionary lookups
             int total = _cachedCsFiles.Length;
             for (int i = 0; i < total; i++)
             {
                 if (i % 50 == 0)
-                    EditorUtility.DisplayProgressBar("GD Checklist",
-                        $"Reading files… ({i}/{total})", 0.1f + 0.4f * i / total);
+                    ScanProgress.Report($"Reading files… ({i}/{total})", 0.1f + 0.5f * i / total);
                 try { _cachedContents[_cachedCsFiles[i]] = File.ReadAllText(_cachedCsFiles[i]); }
                 catch { _cachedContents[_cachedCsFiles[i]] = null; }
             }
-            EditorUtility.DisplayProgressBar("GD Checklist", "Scanning SDK configurations…", 0.5f);
+            ScanProgress.Report("Scanning SDK configurations…", 0.6f);
         }
 
         private static void ClearScanCache()
@@ -105,13 +103,64 @@ namespace GDChecklist
                 ? new Dictionary<string, string>()
                 : ParseJson(overrideJson);
 
-            var allAssets = Directory.GetFiles(dataPath, "*.asset", SearchOption.AllDirectories)
-                .Select(f => f.Replace('\\', '/'))
-                .ToList();
+            List<string> allAssets;
 
-            // For non-GD scans that read .cs files: build the cache once up front
-            bool needsCodeScan = !config.IsGDSDK;
-            if (needsCodeScan) InitScanCache(dataPath);
+            if (config.IsGDSDK)
+            {
+                // GD SDK: all asset paths are known exactly — no filesystem scan needed.
+                // Collect only the specific files we actually read, instantly.
+                var gdConfigs = Path.Combine(dataPath, "GDMonetization", "Runtime", "Resources", "Configurations");
+                var knownPaths = new[]
+                {
+                    Path.Combine(dataPath,   "MaxSdk", "Resources", "AppLovinSettings.asset"),
+                    Path.Combine(gdConfigs,  "MeticaSettings.asset"),
+                    Path.Combine(gdConfigs,  "AdjustToken.asset"),
+                    Path.Combine(gdConfigs,  "AppMetricaSettings.asset"),
+                    Path.Combine(dataPath,   "google-services.json"),
+                    Path.Combine(dataPath,   "GoogleService-Info.plist"),
+                };
+                allAssets = knownPaths
+                    .Where(p => File.Exists(p))
+                    .Select(p => p.Replace('\\', '/'))
+                    .ToList();
+
+                // Also add AdUnitsSettings from a targeted search (only within Configurations folder)
+                var adUnitsPath = Path.Combine(gdConfigs, "AdUnitsSettings.asset");
+                if (File.Exists(adUnitsPath))
+                    allAssets.Add(adUnitsPath.Replace('\\', '/'));
+                else
+                {
+                    // Fallback: search only within known GD folder, not whole project
+                    var gdFolder = Path.Combine(dataPath, "GDMonetization");
+                    if (Directory.Exists(gdFolder))
+                    {
+                        var found = Directory.GetFiles(gdFolder, "AdUnitsSettings.asset",
+                                        SearchOption.AllDirectories).FirstOrDefault();
+                        if (found != null) allAssets.Add(found.Replace('\\', '/'));
+                    }
+                }
+
+                // For ReleaseScanner: it only needs a few specific assets,
+                // do a targeted search in known locations rather than full project scan
+                var releaseAssets = new List<string>();
+                // AppLovinSettings already in allAssets
+                releaseAssets.AddRange(allAssets);
+                // AdjustToken may also be at legacy path
+                var legacyAdjust = Path.Combine(dataPath, "Configurations", "AdjustToken.asset");
+                if (File.Exists(legacyAdjust)) releaseAssets.Add(legacyAdjust.Replace('\\', '/'));
+                allAssets = releaseAssets;
+            }
+            else
+            {
+                // Non-GD: need to search whole project since paths are unknown
+                ScanProgress.Report("Collecting project assets…", 0.05f);
+                allAssets = Directory.GetFiles(dataPath, "*.asset", SearchOption.AllDirectories)
+                    .Select(f => f.Replace('\\', '/'))
+                    .ToList();
+
+                // Build .cs file cache for code scanning
+                InitScanCache(dataPath);
+            }
 
             try
             {
@@ -124,11 +173,10 @@ namespace GDChecklist
             }
             finally
             {
-                if (needsCodeScan) ClearScanCache();
-                EditorUtility.ClearProgressBar();
+                if (!config.IsGDSDK) ClearScanCache();
+                // ScanProgress.End() called by RunScan finally block
             }
 
-            // Pass allAssets so ReleaseScanner doesn't re-scan the filesystem
             result.AllAssets = allAssets;
             return result;
         }

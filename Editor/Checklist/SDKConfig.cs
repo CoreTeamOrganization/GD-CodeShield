@@ -8,7 +8,6 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
-
 namespace GDChecklist
 {
     public static class SDKConfig
@@ -89,6 +88,34 @@ namespace GDChecklist
             return FindAssetAnywhere("AdUnitsSettings.asset") != null;
         }
 
+        // ── Fast variants — File.Exists only on known GD paths, no directory scan ──
+        // Used on button tap for instant response. Falls back to true if path unknown.
+
+        public static bool HasAppLovinFast()
+            => File.Exists(Path.Combine(Application.dataPath, "MaxSdk", "Resources", "AppLovinSettings.asset"));
+
+        public static bool HasMeticaFast()
+            => File.Exists(Path.Combine(Application.dataPath, GD_CONFIG_PATH, "MeticaSettings.asset"));
+
+        public static bool HasAdjustFast()
+            => File.Exists(Path.Combine(Application.dataPath, GD_CONFIG_PATH, "AdjustToken.asset"));
+
+        public static bool HasAppMetricaFast()
+            => File.Exists(Path.Combine(Application.dataPath, GD_CONFIG_PATH, "AppMetricaSettings.asset"))
+            || File.Exists(Path.Combine(Application.dataPath, GD_CONFIG_PATH, "YandexMetricaSettings.asset"));
+
+        public static bool HasFirebaseFast()
+        {
+            if (IsNetworkEnabled("FirebaseNetworkSO")) return true;
+            // Check only the two most common locations
+            return File.Exists(Path.Combine(Application.dataPath, "google-services.json"))
+                || File.Exists(Path.Combine(Application.dataPath, "GoogleService-Info.plist"))
+                || File.Exists(Path.Combine(Application.dataPath, "StreamingAssets", "google-services.json"));
+        }
+
+        public static bool HasAdUnitsFast()
+            => File.Exists(Path.Combine(Application.dataPath, GD_CONFIG_PATH, "AdUnitsSettings.asset"));
+
         // ── Search helpers ────────────────────────────────────────────────────────
         private static string FindAssetAnywhere(string fileName)
         {
@@ -163,6 +190,7 @@ namespace GDChecklist
 
         public static void ResetSetup()
         {
+            _cachedConfig = null; // invalidate cache
             EditorPrefs.DeleteKey(SETUP_DONE_KEY);
             EditorPrefs.DeleteKey(GD_SDK_KEY);
             EditorPrefs.DeleteKey("GDChecklist_Version");
@@ -178,12 +206,58 @@ namespace GDChecklist
         // GD SDK present  → read directly from asset files + NetworkSOs
         // GD SDK absent   → use manual selections from setup screen
 
+        // Cached config — rebuilt only when setup changes, not every frame
+        private static SDKScanConfig _cachedConfig    = null;
+        private static volatile bool _cacheBuilding   = false; // prevent double-build on background thread
+
+        public static void InvalidateConfigCache()
+        {
+            _cachedConfig  = null;
+            _cacheBuilding = false;
+        }
+
+        // Called from background thread on window open — pre-populates _cachedConfig
+        // Uses only System.IO (thread-safe). Never calls UnityEngine API.
+        public static void PrebuildConfigCache()
+        {
+            if (_cachedConfig != null || _cacheBuilding) return;
+            _cacheBuilding = true;
+            try
+            {
+                if (IsGDSDK)
+                {
+                    _cachedConfig = new SDKScanConfig
+                    {
+                        AppLovin   = HasAppLovin(),   Metica     = HasMetica(),
+                        Adjust     = HasAdjust(),     AppMetrica = HasAppMetrica(),
+                        Firebase   = HasFirebase(),   AdUnits    = HasAdUnits(),
+                        IsGDSDK    = true
+                    };
+                }
+                else
+                {
+                    // EditorPrefs is not safe off main thread — just mark as non-GD
+                    // BuildScanConfig() on main thread will fill the real values instantly
+                    _cachedConfig = new SDKScanConfig
+                    {
+                        AppLovin   = ManualAppLovin,   Metica     = ManualMetica,
+                        Adjust     = ManualAdjust,     AppMetrica = ManualAppMetrica,
+                        Firebase   = ManualFirebase,   AdUnits    = ManualAdUnits,
+                        IsGDSDK    = false
+                    };
+                }
+            }
+            catch { _cachedConfig = null; }
+            finally { _cacheBuilding = false; }
+        }
+
         public static SDKScanConfig BuildScanConfig()
         {
+            if (_cachedConfig != null) return _cachedConfig;
+
             if (IsGDSDK)
             {
-                // Developer confirmed GD SDK — auto-detect from actual SO files
-                return new SDKScanConfig
+                _cachedConfig = new SDKScanConfig
                 {
                     AppLovin   = HasAppLovin(),
                     Metica     = HasMetica(),
@@ -196,18 +270,49 @@ namespace GDChecklist
             }
             else
             {
-                // External developer — use what they selected on setup screen
-                return new SDKScanConfig
+                _cachedConfig = new SDKScanConfig
                 {
-                    AppLovin   = ManualAppLovin,
-                    Metica     = ManualMetica,
-                    Adjust     = ManualAdjust,
-                    AppMetrica = ManualAppMetrica,
-                    Firebase   = ManualFirebase,
-                    AdUnits    = ManualAdUnits,
+                    AppLovin   = ManualAppLovin,   Metica     = ManualMetica,
+                    Adjust     = ManualAdjust,     AppMetrica = ManualAppMetrica,
+                    Firebase   = ManualFirebase,   AdUnits    = ManualAdUnits,
                     IsGDSDK    = false
                 };
             }
+            return _cachedConfig;
+        }
+
+        // Same as BuildScanConfig but reports progress — call ONLY from RunScan, never from OnGUI
+        public static SDKScanConfig BuildScanConfigWithProgress()
+        {
+            InvalidateConfigCache(); // always rebuild fresh during an explicit scan
+
+            if (IsGDSDK)
+            {
+                ScanProgress.Report("Detecting AppLovin…",   0.08f); bool al  = HasAppLovin();
+                ScanProgress.Report("Detecting Metica…",     0.14f); bool mt  = HasMetica();
+                ScanProgress.Report("Detecting Adjust…",     0.20f); bool adj = HasAdjust();
+                ScanProgress.Report("Detecting AppMetrica…", 0.26f); bool am  = HasAppMetrica();
+                ScanProgress.Report("Detecting Firebase…",   0.32f); bool fb  = HasFirebase();
+                ScanProgress.Report("Detecting Ad Units…",   0.38f); bool au  = HasAdUnits();
+
+                _cachedConfig = new SDKScanConfig
+                {
+                    AppLovin   = al,  Metica     = mt,  Adjust     = adj,
+                    AppMetrica = am,  Firebase   = fb,  AdUnits    = au,
+                    IsGDSDK    = true
+                };
+            }
+            else
+            {
+                _cachedConfig = new SDKScanConfig
+                {
+                    AppLovin   = ManualAppLovin,   Metica     = ManualMetica,
+                    Adjust     = ManualAdjust,     AppMetrica = ManualAppMetrica,
+                    Firebase   = ManualFirebase,   AdUnits    = ManualAdUnits,
+                    IsGDSDK    = false
+                };
+            }
+            return _cachedConfig;
         }
     }
 }
