@@ -185,7 +185,7 @@ GD CodeShield moves from the editor to the pipeline. Every Pull Request will aut
 
 - **GitHub Check annotations** — violations posted inline with exact file and line number
 - **Merge blocking** — PRs with SOLID score below threshold or SDK misconfigurations cannot be merged
-- **Core Team notifications** — automatic email to the Core Team when a PR fails the check
+- **Team notifications** — automatic email report(Code health) to the Team Lead 
 - **No more self-reported compliance** — the tool decides, not the developer
 
 > Code quality enforced before it hits main. Fix the code, then merge.
