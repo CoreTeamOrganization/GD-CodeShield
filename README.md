@@ -236,3 +236,16 @@ Each item has a **✓ Confirm** button — tap it after verifying on device. Con
 - GD CodeShield hub launcher (`Tools → GD CodeShield`)
 - Animated hover cards, game icon wallpaper (async, silent, timeout-safe)
 - Single UPM package `com.gamedistrict.codeshield`, single asmdef `GD.CodeShield.Editor`
+
+---
+
+## 🚀 Coming Soon — PR Enforcement via GitHub Actions
+
+GD CodeShield moves from the editor to the pipeline. Every Pull Request will automatically trigger SOLID Review and SDK Checklist scans:
+
+- **GitHub Check annotations** — violations posted inline with exact file and line number
+- **Merge blocking** — PRs with SOLID score below threshold or SDK misconfigurations cannot be merged
+- **Core Team notifications** — automatic email to the Core Team when a PR fails the check
+- **No more self-reported compliance** — the tool decides, not the developer
+
+> Code quality enforced before it hits main. Fix the code, then merge.
