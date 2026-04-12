@@ -6,6 +6,20 @@ GD CodeShield is Game District's internal Unity editor toolkit that catches code
 
 ---
 
+## Demo
+
+### SOLID Review
+> Setup → Folder Selection → Scanning → Results with Scores & Violations → Word Export & AI Fix
+
+![SOLID Review Demo](demo/solid_review_demo.gif)
+
+### GD Checklist
+> Hub → SDK Selection → 9-Tab Scan (AppLovin, Metica, Adjust, Firebase, Ad Units, Pre-Release, Build, Manual)
+
+![GD Checklist Demo](demo/checklist_demo.gif)
+
+---
+
 ## Install via UPM (Git URL)
 
 In Unity: `Window → Package Manager → + → Add package from git URL`
