@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/gamedistrict/Documents/GitHub/GD-CodeShield/**)",
+      "Bash(echo \"EXIT:$?\")",
+      "Read(//Users/gamedistrict/.claude/projects/**)"
+    ],
+    "additionalDirectories": [
+      "/Users/gamedistrict/.claude/projects/-Users-gamedistrict-Documents-GitHub-GD-CodeShield",
+      "/Users/gamedistrict/Documents/GitHub/GD-CodeShield"
+    ]
+  }
+}
