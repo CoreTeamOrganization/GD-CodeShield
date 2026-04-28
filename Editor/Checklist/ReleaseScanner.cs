@@ -298,38 +298,24 @@ namespace GDChecklist
 
         static void CheckCompressionLZ4HC(ScanResult r, string yaml)
         {
-            // EditorUserBuildSettings doesn't expose compression directly in all Unity versions.
-            // Check via PlayerSettings Android build subtarget or fall back to manual.
-            bool found = false;
-            string detail = "";
-
-            // Try reading from ProjectSettings YAML with multiple known keys
-            if (!string.IsNullOrEmpty(yaml))
-            {
-                found = yaml.Contains("LZ4HC") ||
-                        Regex.IsMatch(yaml, @"compressionType:\s*3") ||
-                        Regex.IsMatch(yaml, @"AndroidBuildType:\s*1");
-            }
-
-            // If YAML didn't find it, try the EditorPrefs approach (Unity stores it here in 2022+)
-            if (!found)
-            {
-                string prefKey = "Compression-" + UnityEditor.BuildTargetGroup.Android.ToString();
-                if (EditorPrefs.HasKey(prefKey))
-                {
-                    int val = EditorPrefs.GetInt(prefKey, -1);
-                    found = val == 2; // 2 = LZ4HC in EditorPrefs
-                    detail = found ? "LZ4HC ✓" : $"Compression value = {val} (need LZ4HC)";
-                }
-            }
-
-            if (string.IsNullOrEmpty(detail))
-                detail = found ? "LZ4HC found in build config ✓" : "LZ4HC not confirmed — check manually";
+            #if UNITY_2021_1_OR_NEWER
+            var compression = UnityEditor.EditorUserBuildSettings.compressionMethod;
+            bool isLZ4HC = compression.ToString() == "Lz4HC" || compression.ToString() == "LZ4HC";
+            string detail = isLZ4HC ? "LZ4HC ✓" : $"Compression = {compression} (need LZ4HC)";
 
             AddReleaseField(r, TAB_BUILD, "Build Settings", "Compression Method = LZ4HC",
                 detail:   detail,
                 howToFix: "Build Settings → Compression Method → LZ4HC",
+                pass: isLZ4HC, warn: !isLZ4HC);
+            #else
+            bool found = yaml.Contains("LZ4HC") ||
+                         Regex.IsMatch(yaml, @"compressionType:\s*3");
+
+            AddReleaseField(r, TAB_BUILD, "Build Settings", "Compression Method = LZ4HC",
+                detail:   found ? "LZ4HC found in build config ✓" : "LZ4HC not confirmed — check manually",
+                howToFix: "Build Settings → Compression Method → LZ4HC",
                 pass: found, warn: !found);
+            #endif
         }
 
         // ════════════════════════════════════════════════════════════════════════
