@@ -181,7 +181,8 @@ namespace GDChecklist
         static void CheckAdjustEnvironment(ScanResult r, string dataPath)
         {
             string asset = FindAssetByName(r.AllAssets, "AdjustToken")
-                        ?? FindAssetContaining(r.AllAssets, "environment:");
+                        ?? FindAssetByName(r.AllAssets, "AdjustConfig")
+                        ?? FindAssetContaining(r.AllAssets, "Environment:");
 
             if (asset == null)
             {
@@ -193,7 +194,7 @@ namespace GDChecklist
             }
 
             string content = File.ReadAllText(asset);
-            var m = Regex.Match(content, @"environment:\s*(\d+)");
+            var m = Regex.Match(content, @"[Ee]nvironment:\s*(\d+)");
             bool isProd = m.Success && m.Groups[1].Value == "0";
 
             AddReleaseField(r, TAB_PRERELEASE, "Adjust", "Adjust environment = Production",
