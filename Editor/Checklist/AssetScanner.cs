@@ -953,11 +953,6 @@ namespace GDChecklist
             }
             result.AllFields.Add(iosField);
 
-            // FirebaseNetworkSO
-            var networkFile = FindAsset(assets, "FirebaseNetworkSO");
-            AddBoolField(result, TAB_FIREBASE, "Network Settings", "Enable Initialization", "EnableInitialization", networkFile, true);
-            AddBoolField(result, TAB_FIREBASE, "Network Settings", "Enable Events",         "EnableEvents",         networkFile, true);
-            AddBoolField(result, TAB_FIREBASE, "Network Settings", "Enable Revenue",        "EnableRevenue",        networkFile, true);
         }
 
         // ── Ad Units ──────────────────────────────────────────────────────────────
