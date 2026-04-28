@@ -195,7 +195,7 @@ namespace GDChecklist
 
             string content = File.ReadAllText(asset);
             var m = Regex.Match(content, @"[Ee]nvironment:\s*(\d+)");
-            bool isProd = m.Success && m.Groups[1].Value == "0";
+            bool isProd = m.Success && m.Groups[1].Value == "1";
 
             AddReleaseField(r, TAB_PRERELEASE, "Adjust", "Adjust environment = Production",
                 detail:   m.Success ? (isProd ? "Production ✓" : "⚠ Still set to Sandbox!") : "Could not read environment field",
