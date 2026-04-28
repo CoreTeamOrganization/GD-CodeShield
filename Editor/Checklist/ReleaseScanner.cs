@@ -301,23 +301,27 @@ namespace GDChecklist
             bool found = false;
             string detail = "";
 
-            // Try reflection — Unity stores this property differently across versions
-            var busType = typeof(UnityEditor.EditorUserBuildSettings);
-            var prop = busType.GetProperty("compressionMethod",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-                ?? busType.GetProperty("compressionType",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-
-            if (prop != null)
+            // GetCompressionType and Compression enum are internal — use reflection
+            try
             {
-                var val = prop.GetValue(null);
-                string valStr = val?.ToString() ?? "";
-                found = valStr.Contains("Lz4HC") || valStr.Contains("LZ4HC");
-                detail = found ? "LZ4HC ✓" : $"Compression = {valStr} (need LZ4HC)";
-            }
+                var method = typeof(EditorUserBuildSettings).GetMethod(
+                    "GetCompressionType",
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic,
+                    null, new System.Type[] { typeof(BuildTargetGroup) }, null);
 
-            // Fallback: try YAML
-            if (!found && !string.IsNullOrEmpty(yaml))
+                if (method != null)
+                {
+                    object result = method.Invoke(null, new object[] { BuildTargetGroup.Android });
+                    string name = result.ToString();
+                    found = name.IndexOf("Lz4HC", System.StringComparison.OrdinalIgnoreCase) >= 0;
+                    detail = found ? "LZ4HC ✓" : $"Compression = {name} (need Lz4HC)";
+                }
+            }
+            catch { /* reflection unavailable — fall through */ }
+
+            // Fallback: ProjectSettings YAML
+            if (!found && string.IsNullOrEmpty(detail) && !string.IsNullOrEmpty(yaml))
             {
                 found = yaml.Contains("LZ4HC") ||
                         Regex.IsMatch(yaml, @"compressionType:\s*3");
