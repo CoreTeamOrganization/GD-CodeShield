@@ -275,6 +275,17 @@ namespace GDChecklist
 
         static void CheckSymbolsPublic(ScanResult r, string yaml)
         {
+            // Unity 2021+: use EditorUserBuildSettings API, not YAML (field removed from ProjectSettings.asset)
+            #if UNITY_2021_1_OR_NEWER
+            var symbolsMode = UnityEditor.EditorUserBuildSettings.androidCreateSymbols;
+            bool isPublic = symbolsMode == UnityEditor.AndroidCreateSymbols.Public;
+            string detail = isPublic ? "Symbols = Public ✓" : $"Symbols = {symbolsMode} (need Public)";
+
+            AddReleaseField(r, TAB_BUILD, "Build Settings", "Create symbols.zip = Public",
+                detail:   detail,
+                howToFix: "Build Settings → Android → Create symbols.zip → Public",
+                pass: isPublic, warn: false, fail: !isPublic);
+            #else
             var m = Regex.Match(yaml, @"AndroidCreateSymbols:\s*(\d)");
             bool isPublic = m.Success && m.Groups[1].Value == "1";
 
@@ -282,10 +293,23 @@ namespace GDChecklist
                 detail:   m.Success ? (isPublic ? "Symbols = Public ✓" : $"Symbols value = {m.Groups[1].Value} (need 1 = Public)") : "Could not read AndroidCreateSymbols",
                 howToFix: "Build Settings → Android → Create symbols.zip → Public",
                 pass: isPublic, warn: false, fail: !isPublic);
+            #endif
         }
 
         static void CheckCompressionLZ4HC(ScanResult r, string yaml)
         {
+            // Unity 2021+: use EditorUserBuildSettings API
+            #if UNITY_2021_1_OR_NEWER
+            var compression = UnityEditor.EditorUserBuildSettings.GetCompressionType(
+                UnityEditor.BuildTargetGroup.Android);
+            bool isLZ4HC = compression == UnityEditor.Compression.Lz4HC;
+            string detail = isLZ4HC ? "LZ4HC ✓" : $"Compression = {compression} (need LZ4HC)";
+
+            AddReleaseField(r, TAB_BUILD, "Build Settings", "Compression Method = LZ4HC",
+                detail:   detail,
+                howToFix: "Build Settings → Compression Method → LZ4HC",
+                pass: isLZ4HC, warn: !isLZ4HC);
+            #else
             bool found = yaml.Contains("LZ4HC") ||
                          Regex.IsMatch(yaml, @"compressionType:\s*3");
 
@@ -293,6 +317,7 @@ namespace GDChecklist
                 detail:   found ? "LZ4HC found in build config ✓" : "LZ4HC not confirmed — check manually",
                 howToFix: "Build Settings → Compression Method → LZ4HC",
                 pass: found, warn: !found);
+            #endif
         }
 
         // ════════════════════════════════════════════════════════════════════════
