@@ -21,6 +21,11 @@ namespace GDChecklist
         // ── Scroll ────────────────────────────────────────────────────────────────
         private Vector2 _scroll;
 
+        // ── Tab indices ───────────────────────────────────────────────────────────
+        // SDK tabs use 0-5 matching FieldResult.Tab values.
+        // SDK Versions is a synthesis tab — sentinel index that doesn't match any FieldResult.
+        private const int TAB_SDK_VERSIONS = -100;
+
         // ── Sub-tabs (Adjust only) ───────────────────────────────────────────────
         private int _adjustSubTab = 0;
         private static readonly string[] AdjustSubTabs =
@@ -314,6 +319,8 @@ namespace GDChecklist
             // Build active tab list from current scan config
             var cfg = _homeConfig ?? SDKConfig.BuildScanConfig();
             var activeTabs = new List<(string label, int index)>();
+            // SDK Versions tab — always first, sentinel index -100 so it doesn't collide with FieldResult.Tab values
+            activeTabs.Add(("SDK Versions", TAB_SDK_VERSIONS));
             if (cfg.AppLovin)   activeTabs.Add(("AppLovin / AdMob", 0));
             if (cfg.Metica)     activeTabs.Add(("Metica",           1));
             if (cfg.Adjust)     activeTabs.Add(("Adjust",           2));
@@ -409,6 +416,21 @@ namespace GDChecklist
             // Each field row: 36 normal, 72 mismatch, 60 editing + 4 gap
             // Section headers: 18px each, plus 6px gap after each section
             float contentH = 16; // top padding
+
+            // Reserve scroll height for SDK Versions synthesis tab (5 SDK sections, each variable height)
+            if (currentTabIndex == TAB_SDK_VERSIONS)
+            {
+                int totalLines = 0;
+                for (int i = 0; i <= 4; i++)
+                {
+                    var sv = SDKVersionDetector.GetVersionForTab(i);
+                    int modCount = sv?.Modules?.Count ?? 0;
+                    totalLines += modCount > 0 ? modCount : 1;
+                }
+                // Each SDK section: name header(28) + lines * 18 + section gap(14)
+                contentH += 5 * (28f + 14f) + totalLines * 18f;
+            }
+
             string lastSec = null;
             foreach (var f in fields)
             {
@@ -449,12 +471,134 @@ namespace GDChecklist
 
             float y = 16;
 
-            if (fields.Count == 0)
+            // SDK Versions synthesis tab — separate from any SDK's field list.
+            if (currentTabIndex == TAB_SDK_VERSIONS)
+            {
+                DrawSdkVersionsTab(24, ref y, body.width - 48);
+            }
+            else if (fields.Count == 0)
                 GUI.Label(new Rect(24, y, body.width - 48, 24), "No fields scanned for this SDK.", _sMuted);
             else
                 DrawFieldGroup(fields, 24, ref y, body.width - 48);
 
             GUI.EndScrollView();
+        }
+
+        // ── SDK Versions tab renderer ─────────────────────────────────────────────
+        // Lists each SDK as a full-width section. Replaces per-tab version headers.
+        private void DrawSdkVersionsTab(float x, ref float y, float w)
+        {
+            // Page title
+            GUI.Label(new Rect(x, y, w, 22), "Installed SDK Versions",
+                new GUIStyle(_sBody) {
+                    fontSize = 14,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = C_TEXT }
+                });
+            y += 26;
+            GUI.Label(new Rect(x, y, w, 16),
+                "Auto-detected from your project's Packages/manifest.json and Assets/ folders.",
+                new GUIStyle(_sMuted) { fontSize = 10, normal = { textColor = C_MUTED } });
+            y += 22;
+
+            // Render each SDK section in order
+            for (int tabIndex = 0; tabIndex <= 4; tabIndex++)
+            {
+                var sv = SDKVersionDetector.GetVersionForTab(tabIndex);
+                if (sv == null)
+                {
+                    sv = new SDKVersion { Name = SdkNameForTab(tabIndex) };
+                }
+                DrawSdkSection(sv, x, ref y, w);
+                y += 8; // gap between sections
+            }
+        }
+
+        // Renders one SDK section: yellow accent header + module list
+        private void DrawSdkSection(SDKVersion v, float x, ref float y, float w)
+        {
+            int modCount = v.Modules?.Count ?? 0;
+            int lines = modCount > 0 ? modCount : 1;
+
+            const float headerH    = 28f;
+            const float lineH      = 18f;
+            const float padTop     = 6f;
+            const float padBottom  = 8f;
+            float rowH = headerH + lines * lineH + padTop + padBottom;
+
+            // Subtle background panel
+            Bg(new Rect(x, y, w, rowH), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.05f));
+            Outline(new Rect(x, y, w, rowH), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.25f));
+            Bg(new Rect(x, y, 3, rowH), C_ACCENT);
+
+            // SDK name
+            GUI.Label(new Rect(x + 14, y + padTop, w - 28, headerH), v.Name,
+                new GUIStyle(_sBody) {
+                    fontSize = 13,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = C_ACCENT }
+                });
+
+            // Module rows (or "not detected")
+            float ly = y + padTop + headerH;
+            if (modCount > 0)
+            {
+                for (int i = 0; i < v.Modules.Count; i++)
+                {
+                    var m = v.Modules[i];
+                    // Label column (60% width), version column (right side)
+                    GUI.Label(new Rect(x + 28, ly, (w - 42) * 0.65f, lineH),
+                        m.label,
+                        new GUIStyle(_sBody) {
+                            fontSize = 11,
+                            normal = { textColor = C_TEXT }
+                        });
+                    GUI.Label(new Rect(x + 28 + (w - 42) * 0.65f, ly, (w - 42) * 0.35f, lineH),
+                        $"v{m.version}",
+                        new GUIStyle(_sBody) {
+                            fontSize = 11,
+                            fontStyle = FontStyle.Bold,
+                            normal = { textColor = C_TEXT }
+                        });
+                    ly += lineH;
+                }
+            }
+            else if (!string.IsNullOrEmpty(v.Version))
+            {
+                GUI.Label(new Rect(x + 28, ly, w - 42, lineH),
+                    $"v{v.Version}",
+                    new GUIStyle(_sBody) {
+                        fontSize = 11,
+                        fontStyle = FontStyle.Bold,
+                        normal = { textColor = C_TEXT }
+                    });
+            }
+            else
+            {
+                GUI.Label(new Rect(x + 28, ly, w - 42, lineH),
+                    "Not detected",
+                    new GUIStyle(_sBody) {
+                        fontSize = 11,
+                        fontStyle = FontStyle.Italic,
+                        normal = { textColor = C_MUTED }
+                    });
+            }
+
+            y += rowH;
+        }
+
+        // ── SDK name helper (used by SDK Versions tab) ────────────────────────────
+        private string SdkNameForTab(int tabIndex)
+        {
+            switch (tabIndex)
+            {
+                case 0: return "AppLovin MAX";
+                case 1: return "Metica";
+                case 2: return "Adjust";
+                case 3: return "AppMetrica";
+                case 4: return "Firebase";
+                default: return "SDK";
+            }
         }
 
         // ── Adjust sub-tab bar ─────────────────────────────────────────────────────
@@ -1228,6 +1372,7 @@ namespace GDChecklist
         private void RunScan()
         {
             ScanProgress.Begin("GD Checklist");
+            SDKVersionDetector.ClearCache();
             try
             {
                 ScanProgress.Report("Detecting SDKs…", 0.05f);
