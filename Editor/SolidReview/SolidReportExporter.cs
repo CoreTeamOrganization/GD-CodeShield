@@ -289,6 +289,8 @@ namespace SolidAgent
             var sb = new StringBuilder();
             sb.Append("{");
             sb.Append($"\"projectName\":{JsonStr(proj)},");
+            sb.Append($"\"gameName\":{JsonStr(PlayerSettings.productName ?? string.Empty)},");
+            sb.Append($"\"bundleId\":{JsonStr(Application.identifier ?? string.Empty)},");
             sb.Append($"\"generatedAt\":{JsonStr(report.GeneratedAt.ToString("yyyy-MM-dd HH:mm"))},");
             sb.Append($"\"totalFiles\":{report.TotalFiles},");
             sb.Append($"\"totalViolations\":{report.TotalViolations},");
@@ -324,6 +326,8 @@ namespace SolidAgent
             var sb = new StringBuilder();
             sb.Append("{");
             sb.Append("\"fileName\":" + JsonStr(name) + ",");
+            sb.Append("\"gameName\":" + JsonStr(PlayerSettings.productName ?? string.Empty) + ",");
+            sb.Append("\"bundleId\":" + JsonStr(Application.identifier ?? string.Empty) + ",");
             sb.Append("\"ratings\":[");
             sb.Append(string.Join(",", tmpReport.Ratings.Select(r =>
                 "{\"principle\":" + JsonStr(r.Principle.ToString()) +

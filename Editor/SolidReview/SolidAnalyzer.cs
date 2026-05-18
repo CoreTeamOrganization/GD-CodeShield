@@ -528,7 +528,13 @@ namespace SolidAgent
         // 2 = Weak       (6–9 violations, or any High)
         // 1 = Poor       (10+ violations, or multiple High)
 
-        private static readonly string[] Labels = { "", "Poor", "Weak", "Acceptable", "Very Good", "Excellent" };
+        // Score → label mapping. Target is 4 — anything below should NOT read as "good enough".
+        // 5 = On Target
+        // 4 = Meets Target
+        // 3 = Below Target
+        // 2 = Needs Work
+        // 1 = Critical
+        private static readonly string[] Labels = { "", "Critical", "Needs Work", "Below Target", "Meets Target", "On Target" };
 
         private static readonly string[] SRP_Reasons =
         {
@@ -613,11 +619,12 @@ namespace SolidAgent
                 ? (float)report.Ratings.Sum(r => r.Score) / report.Ratings.Count
                 : 0f;
             report.OverallScore = avg;
-            report.OverallLabel = avg >= 4.5f ? "Excellent"
-                                : avg >= 3.5f ? "Very Good"
-                                : avg >= 2.5f ? "Acceptable"
-                                : avg >= 1.5f ? "Weak"
-                                : "Poor";
+            // Thresholds aligned with the exported docx report. Target is 4.0.
+            report.OverallLabel = avg >= 4.5f ? "On Target"
+                                : avg >= 4.0f ? "Meets Target"
+                                : avg >= 3.0f ? "Below Target"
+                                : avg >= 2.0f ? "Needs Work"
+                                : "Critical";
 
             return report;
         }

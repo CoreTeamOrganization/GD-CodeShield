@@ -21,6 +21,11 @@ namespace GDChecklist
         // ── Scroll ────────────────────────────────────────────────────────────────
         private Vector2 _scroll;
 
+        // ── Sub-tabs (Adjust only) ───────────────────────────────────────────────
+        private int _adjustSubTab = 0;
+        private static readonly string[] AdjustSubTabs =
+            { "Config", "Init Path", "Manifest", "Dependencies", "iOS", "Ad Revenue" };
+
         // ── Scan results ──────────────────────────────────────────────────────────
         private ScanResult _scan = null;
         private bool _scanning = false;
@@ -370,9 +375,35 @@ namespace GDChecklist
             // Get fields for the currently active tab
             int currentTabIndex = activeTabs.Count > 0 ? activeTabs[_tab].index : -1;
 
+            // ── Adjust sub-tabs ─────────────────────────────────────────────────────
+            // When the Adjust main tab is active, draw a sub-tab bar that splits results
+            // into Config (existing) + 5 Integration sub-tabs (new validator output).
+            const int TAB_ADJUST = 2;
+            float subTabH = 0f;
+            string activeSubTab = null;
+            if (currentTabIndex == TAB_ADJUST)
+            {
+                subTabH = 30f;
+                activeSubTab = DrawAdjustSubTabBar(body, ty + 36);
+            }
+
             var fields = currentTabIndex >= 0
                 ? _scan.AllFields.Where(f => f.Tab == currentTabIndex).ToList()
                 : new List<FieldResult>();
+
+            // Filter by active Adjust sub-tab
+            if (currentTabIndex == TAB_ADJUST && activeSubTab != null)
+            {
+                if (activeSubTab == "Config")
+                {
+                    // Config = anything without an integration SubTab (legacy ScanAdjust output)
+                    fields = fields.Where(f => string.IsNullOrEmpty(f.SubTab)).ToList();
+                }
+                else
+                {
+                    fields = fields.Where(f => f.SubTab == activeSubTab).ToList();
+                }
+            }
 
             // Calculate actual content height so scroll always covers all fields
             // Each field row: 36 normal, 72 mismatch, 60 editing + 4 gap
@@ -385,18 +416,35 @@ namespace GDChecklist
                 bool editing = _editingFieldKey == FieldKey(f);
                 bool isEmpty = f.Status == FieldStatus.Empty;
                 bool isManual = f.YamlKey == "manual";
+                bool isIntegration = f.YamlKey == "integration";
                 bool isRelease = f.Tab == GDChecklist.ReleaseScanner.TAB_PRERELEASE
                               || f.Tab == GDChecklist.ReleaseScanner.TAB_BUILD;
                 bool editingMissing = editing && (f.Status == FieldStatus.Missing || isEmpty);
-                float rh = isManual ? 54f
-                         : isRelease ? (f.Status == FieldStatus.Mismatch || f.Status == FieldStatus.Missing ? 66f : 54f)
-                         : (editingMissing ? 72f : editing ? 60f : f.Status == FieldStatus.Mismatch ? 72f : (f.Status == FieldStatus.Missing || isEmpty) ? 60f : 36f);
+                float rh;
+                if (isIntegration)
+                {
+                    // Estimate integration row height similarly to DrawIntegrationRow
+                    string detail = f.ExpectedValue ?? "";
+                    bool hasSnippet = !string.IsNullOrEmpty(f.FixSnippet);
+                    bool hasPath    = !string.IsNullOrEmpty(f.AssetPath);
+                    int detailLines = string.IsNullOrEmpty(detail) ? 0 : Mathf.CeilToInt(detail.Length / 85f) + detail.Count(c => c == '\n');
+                    float detailH  = detailLines * 13f;
+                    float snippetH = hasSnippet ? Mathf.Max(40f, f.FixSnippet.Count(c => c == '\n') * 12f + 24f) : 0f;
+                    float pathH    = hasPath ? 18f : 0f;
+                    rh = 36f + detailH + snippetH + pathH + 8f;
+                }
+                else
+                {
+                    rh = isManual ? 54f
+                       : isRelease ? (f.Status == FieldStatus.Mismatch || f.Status == FieldStatus.Missing ? 66f : 54f)
+                       : (editingMissing ? 72f : editing ? 60f : f.Status == FieldStatus.Mismatch ? 72f : (f.Status == FieldStatus.Missing || isEmpty) ? 60f : 36f);
+                }
                 contentH += rh + 4f;
             }
-            contentH += 32; // bottom padding
+            contentH += 80; // bottom padding — generous buffer to keep last row fully visible above the scroll edge
 
             _scroll = GUI.BeginScrollView(
-                new Rect(body.x, ty + 36, body.width, body.height - 36),
+                new Rect(body.x, ty + 36 + subTabH, body.width, body.height - 36 - subTabH),
                 _scroll, new Rect(0, 0, body.width - 16, contentH));
 
             float y = 16;
@@ -407,6 +455,77 @@ namespace GDChecklist
                 DrawFieldGroup(fields, 24, ref y, body.width - 48);
 
             GUI.EndScrollView();
+        }
+
+        // ── Adjust sub-tab bar ─────────────────────────────────────────────────────
+        // Drawn directly under the main tab bar when Adjust main tab is active.
+        // Returns the label of the currently selected sub-tab (so DrawResults can filter).
+        private string DrawAdjustSubTabBar(Rect body, float yStart)
+        {
+            // Build per-subtab issue counts
+            var counts = new int[AdjustSubTabs.Length];
+            foreach (var f in _scan.AllFields)
+            {
+                if (f.Tab != 2) continue;
+                if (f.Status != FieldStatus.Mismatch && f.Status != FieldStatus.Missing
+                    && f.Status != FieldStatus.Empty) continue;
+
+                string sub = string.IsNullOrEmpty(f.SubTab) ? "Config" : f.SubTab;
+                for (int i = 0; i < AdjustSubTabs.Length; i++)
+                {
+                    if (AdjustSubTabs[i] == sub) { counts[i]++; break; }
+                }
+            }
+
+            Bg(new Rect(body.x, yStart, body.width, 30), C_SURF2);
+
+            float sx = body.x + 16;
+            for (int i = 0; i < AdjustSubTabs.Length; i++)
+            {
+                string lbl = AdjustSubTabs[i];
+                int issues = counts[i];
+                bool active = i == _adjustSubTab;
+                Color col = issues > 0 ? C_ORANGE : (active ? C_ACCENT : C_MUTED);
+
+                string text = issues > 0 ? $"{lbl}  ⚠{issues}" : lbl;
+                float tw = Mathf.Max(text.Length * 6.6f + 18f, 70f);
+
+                if (active)
+                {
+                    Bg(new Rect(sx, yStart + 26, tw, 3), C_ACCENT);
+                    GUI.Label(new Rect(sx, yStart, tw, 30), text,
+                        new GUIStyle(_sBody)
+                        {
+                            alignment = TextAnchor.MiddleCenter,
+                            fontSize = 10,
+                            fontStyle = FontStyle.Bold,
+                            normal = { textColor = col }
+                        });
+                }
+                else
+                {
+                    GUI.Label(new Rect(sx, yStart, tw, 30), text,
+                        new GUIStyle(_sMuted)
+                        {
+                            alignment = TextAnchor.MiddleCenter,
+                            fontSize = 10,
+                            normal = { textColor = col }
+                        });
+                    if (Click(new Rect(sx, yStart, tw, 30)))
+                    {
+                        _adjustSubTab = i;
+                        _scroll = Vector2.zero;
+                        Repaint();
+                    }
+                }
+                sx += tw + 2;
+            }
+
+            HRule(new Rect(body.x, yStart + 29, body.width, 1), C_BORDER);
+
+            // Clamp sub-tab index if out of bounds
+            if (_adjustSubTab < 0 || _adjustSubTab >= AdjustSubTabs.Length) _adjustSubTab = 0;
+            return AdjustSubTabs[_adjustSubTab];
         }
 
         private void DrawFieldGroup(List<FieldResult> fields, float x, ref float y, float w)
@@ -445,6 +564,14 @@ namespace GDChecklist
 
         private void DrawFieldRow(FieldResult f, float x, ref float y, float w)
         {
+            // Integration rows (Adjust Integration scanner) use a different layout —
+            // they have rich detail text + optional copy-fix button, no Expected/Found diff.
+            if (f.YamlKey == "integration")
+            {
+                DrawIntegrationRow(f, x, ref y, w);
+                return;
+            }
+
             bool editing = _editingFieldKey == FieldKey(f);
             bool isEmpty = f.Status == FieldStatus.Empty;
 
@@ -626,6 +753,125 @@ namespace GDChecklist
                     ApplyValue(f, useExpected: true);
                 if (Btn(new Rect(x + w - 108, y + 24, 96, 22), "Keep Existing", C_MUTED))
                 { f.Status = FieldStatus.Ignored; Repaint(); }
+            }
+
+            y += rowH + 4;
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
+        //  INTEGRATION ROW — for Adjust Integration scanner output
+        // ════════════════════════════════════════════════════════════════════════
+
+        private void DrawIntegrationRow(FieldResult f, float x, ref float y, float w)
+        {
+            Color sidCol = f.Status == FieldStatus.Match    ? C_GREEN
+                         : f.Status == FieldStatus.Mismatch ? C_RED
+                         : f.Status == FieldStatus.Missing  ? C_ORANGE
+                         :                                    C_MUTED;
+            Color bgCol  = new Color(sidCol.r, sidCol.g, sidCol.b, 0.06f);
+
+            string icon  = f.Status == FieldStatus.Match    ? "✓"
+                         : f.Status == FieldStatus.Mismatch ? "✗"
+                         : f.Status == FieldStatus.Missing  ? "?"
+                         :                                    "—";
+
+            // Compute dynamic height based on content
+            // ─ Field name line: 18 ─ Project value line: 14 ─ Detail (wrapped): per ~70 chars
+            string detail = f.ExpectedValue ?? "";
+            bool hasSnippet = !string.IsNullOrEmpty(f.FixSnippet);
+            bool hasPath    = !string.IsNullOrEmpty(f.AssetPath);
+
+            // Rough wrap calc — assume ~85 chars per line at 10px font
+            int detailLines = string.IsNullOrEmpty(detail) ? 0 : Mathf.CeilToInt(detail.Length / 85f) + detail.Count(c => c == '\n');
+            float detailH   = detailLines * 13f;
+            float snippetH  = hasSnippet ? Mathf.Max(40f, f.FixSnippet.Count(c => c == '\n') * 12f + 24f) : 0f;
+            float pathH     = hasPath ? 18f : 0f;
+            float rowH      = 36f + detailH + snippetH + pathH + 8f;
+
+            Bg(new Rect(x, y, w, rowH), bgCol);
+            Outline(new Rect(x, y, w, rowH), new Color(sidCol.r, sidCol.g, sidCol.b, 0.30f));
+            Bg(new Rect(x, y, 3, rowH), sidCol);
+
+            // Icon + Field name
+            GUI.Label(new Rect(x + 12, y + 8, 20, 20), icon,
+                new GUIStyle(_sBody) { fontSize = 13, fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleCenter, normal = { textColor = sidCol } });
+            GUI.Label(new Rect(x + 36, y + 7, w - 120, 18), f.FieldName,
+                new GUIStyle(_sBody) { fontSize = 11, fontStyle = FontStyle.Bold,
+                    normal = { textColor = C_TEXT } });
+
+            // Status pill
+            string pillText = f.Status == FieldStatus.Match    ? "Match"
+                            : f.Status == FieldStatus.Mismatch ? "Issue"
+                            : f.Status == FieldStatus.Missing  ? "Missing"
+                            :                                    "—";
+            DrawPill(new Rect(x + w - 74, y + 8, 64, 16), pillText, sidCol);
+
+            // Project value (one-liner summary)
+            string projVal = f.ProjectValue ?? "";
+            if (projVal.Length > 110) projVal = projVal.Substring(0, 110) + "…";
+            GUI.Label(new Rect(x + 36, y + 26, w - 60, 14), projVal,
+                new GUIStyle(_sMuted) { fontSize = 10, normal = { textColor = sidCol } });
+
+            float dy = y + 42f;
+
+            // Detail (multi-line wrapped)
+            if (!string.IsNullOrEmpty(detail))
+            {
+                GUI.Label(new Rect(x + 36, dy, w - 60, detailH + 4),
+                    detail,
+                    new GUIStyle(_sMuted) { fontSize = 10, wordWrap = true });
+                dy += detailH;
+            }
+
+            // Fix snippet (XML to copy)
+            if (hasSnippet)
+            {
+                dy += 4;
+                var snipRect = new Rect(x + 36, dy, w - 160, snippetH - 4);
+                Bg(snipRect, new Color(0.05f, 0.05f, 0.05f, 0.8f));
+                Outline(snipRect, new Color(sidCol.r, sidCol.g, sidCol.b, 0.4f));
+                GUI.Label(new Rect(snipRect.x + 6, snipRect.y + 4, snipRect.width - 12, snipRect.height - 8),
+                    f.FixSnippet,
+                    new GUIStyle(_sCode) { fontSize = 9, wordWrap = true,
+                        normal = { textColor = new Color(0.85f, 0.85f, 0.85f) } });
+
+                if (Btn(new Rect(x + w - 116, dy + (snippetH - 28) / 2, 100, 24),
+                        "📋  Copy Fix", C_ACCENT))
+                {
+                    EditorGUIUtility.systemCopyBuffer = f.FixSnippet;
+                    ShowNotification(new GUIContent("Copied to clipboard"));
+                }
+                dy += snippetH;
+            }
+
+            // Asset / file path with Open button
+            if (hasPath)
+            {
+                string pathText = f.AssetPath;
+                if (f.LineNumber > 0) pathText += $":{f.LineNumber}";
+                GUI.Label(new Rect(x + 36, dy + 2, w - 130, 14), pathText,
+                    new GUIStyle(_sMuted) { fontSize = 9,
+                        normal = { textColor = new Color(C_BLUE.r, C_BLUE.g, C_BLUE.b, 0.85f) } });
+                if (Btn(new Rect(x + w - 86, dy, 70, 18), "Open", C_MUTED))
+                {
+                    var assetPath = f.AssetPath;
+                    // If absolute path under Application.dataPath, convert to relative
+                    string projRoot = Application.dataPath.Replace('\\', '/');
+                    string normPath = assetPath.Replace('\\', '/');
+                    if (normPath.StartsWith(projRoot))
+                        assetPath = "Assets" + normPath.Substring(projRoot.Length);
+                    var asset = AssetDatabase.LoadAssetAtPath<Object>(assetPath);
+                    if (asset != null)
+                    {
+                        if (f.LineNumber > 0) AssetDatabase.OpenAsset(asset, f.LineNumber);
+                        else AssetDatabase.OpenAsset(asset);
+                    }
+                    else
+                    {
+                        EditorUtility.RevealInFinder(f.AssetPath);
+                    }
+                }
             }
 
             y += rowH + 4;

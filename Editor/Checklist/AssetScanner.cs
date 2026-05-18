@@ -16,6 +16,7 @@ namespace GDChecklist
     public class FieldResult
     {
         public int         Tab           { get; set; }
+        public string      SubTab        { get; set; } // optional — used to route into sub-tabs within a main tab (Adjust)
         public string      Section       { get; set; }
         public string      FieldName     { get; set; }
         public string      Platform      { get; set; }
@@ -25,6 +26,8 @@ namespace GDChecklist
         public string      AssetPath     { get; set; }
         public string      YamlKey       { get; set; }
         public bool        IsExternalDev { get; set; } // show paste field when empty
+        public string      FixSnippet    { get; set; } // optional — XML/snippet to copy to clipboard
+        public int         LineNumber    { get; set; } // optional — for code file references
     }
 
     public class ScanResult
@@ -167,6 +170,7 @@ namespace GDChecklist
                 if (config.AppLovin)   ScanAppLovin   (allAssets, result, jsonOverrides, config.IsGDSDK);
                 if (config.Metica)     ScanMetica     (allAssets, result, jsonOverrides, !config.IsGDSDK);
                 if (config.Adjust)     ScanAdjust     (allAssets, result, jsonOverrides, !config.IsGDSDK);
+                if (config.Adjust)     AdjustIntegrationScanner.Append(result, dataPath);
                 if (config.AppMetrica) ScanAppMetrica (allAssets, result, jsonOverrides, !config.IsGDSDK);
                 if (config.Firebase)   ScanFirebase   (allAssets, result, jsonOverrides);
                 if (config.AdUnits)    ScanAdUnits    (allAssets, result, jsonOverrides, config);

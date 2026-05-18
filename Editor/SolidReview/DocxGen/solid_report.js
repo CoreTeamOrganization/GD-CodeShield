@@ -44,19 +44,31 @@ const {
 } = loadDocx();
 
 // ── Colours (hex without #) ──────────────────────────────────────────────────
-const GD_YELLOW   = "FFD000";
-const GD_DARK     = "1A1A1A";
-const GD_DARK2    = "222222";
-const GD_WHITE    = "F0F0F0";
-const GD_MUTED    = "8C8C8C";
-const C_GREEN     = "50C864";
-const C_BLUE      = "2EA6F2";
-const C_ORANGE    = "FFBF00";
-const C_RED_WEAK  = "FF7D26";
-const C_RED_POOR  = "DC3C3C";
-const C_RED_HIGH  = "DC3C3C";
-const C_ORANGE_MED= "FFB200";
-const C_GREEN_LOW = "50C864";
+// LIGHT THEME — designed for white page background, readable when printed.
+// GD yellow stays as the brand accent for headings & callouts.
+const GD_YELLOW   = "C99700";  // darker yellow — readable on white
+const GD_ACCENT   = "FFC700";  // bright accent for fills (borders, pill backgrounds)
+const GD_PAGE_BG  = "FFFFFF";  // page background (white)
+const GD_CARD_BG  = "F4F4F4";  // soft gray card surface
+const GD_CARD_BG2 = "EAEAEA";  // slightly darker card variant
+const GD_HEADER_BG= "FFF5D6";  // pale yellow header rows
+const GD_TEXT     = "1A1A1A";  // primary text color
+const GD_TEXT_SUB = "4A4A4A";  // secondary text
+const GD_MUTED    = "7A7A7A";  // muted/quiet text
+const GD_BORDER   = "D6D6D6";  // table cell border
+const C_GREEN     = "1F9D55";  // print-safe green
+const C_BLUE      = "1A6FB5";  // print-safe blue
+const C_ORANGE    = "D97706";  // print-safe orange (mid)
+const C_RED_WEAK  = "CC6628";  // print-safe orange (weak score)
+const C_RED_POOR  = "B91C1C";  // print-safe red
+const C_RED_HIGH  = "B91C1C";
+const C_ORANGE_MED= "D97706";
+const C_GREEN_LOW = "1F9D55";
+
+// Legacy aliases kept so the rest of the file compiles without rewrites
+const GD_DARK     = GD_CARD_BG;
+const GD_DARK2    = GD_CARD_BG2;
+const GD_WHITE    = GD_TEXT;
 
 function scoreColor(score) {
   if (score >= 4.5) return C_GREEN;
@@ -70,6 +82,8 @@ function sevColor(sev) {
   if (sev === "Medium") return C_ORANGE_MED;
   return C_GREEN_LOW;
 }
+// Score quality words. These are descriptive but DO NOT communicate target gap —
+// see scoreStatus() for the target-aware version used in the report.
 function scoreLabel(score) {
   if (score >= 4.5) return "Excellent";
   if (score >= 3.5) return "Very Good";
@@ -78,10 +92,74 @@ function scoreLabel(score) {
   return "Poor";
 }
 
+// Target is 4.0 — anything below should signal action, not "acceptable".
+const SCORE_TARGET = 4.0;
+function scoreStatus(score) {
+  if (score >= 4.5) return "On Target";
+  if (score >= 4.0) return "Meets Target";
+  if (score >= 3.0) return "Below Target";
+  if (score >= 2.0) return "Needs Work";
+  return "Critical";
+}
+function isBelowTarget(score) {
+  return score < SCORE_TARGET;
+}
+
+// Group violations by normalised title so we don't print 11 identical "X has multiple responsibilities" lines.
+// Returns array of { title, severity, description, evidence, locations: [{fileName, startLine}], count }
+// Title patterns like "AnalyticsManager has multiple responsibilities" are normalised to "Class has multiple responsibilities"
+// so duplicates collapse, with the original class name preserved in each location.
+function groupViolations(violations) {
+  const groups = new Map();
+  for (const v of violations) {
+    const key = normaliseTitle(v.title || "") + "|" + (v.severity || "");
+    const loc = {
+      className: extractClassName(v.title || "", v.location?.fileName || ""),
+      fileName: v.location?.fileName || "",
+      startLine: v.location?.startLine || 0,
+    };
+    if (groups.has(key)) {
+      const g = groups.get(key);
+      g.locations.push(loc);
+      g.count++;
+    } else {
+      groups.set(key, {
+        title: genericTitle(v.title || ""),
+        severity: v.severity || "Low",
+        description: v.description || "",
+        evidence: v.evidence || "",
+        locations: [loc],
+        count: 1,
+      });
+    }
+  }
+  return [...groups.values()];
+}
+
+// "AnalyticsManager has multiple responsibilities" → "X has multiple responsibilities"
+function normaliseTitle(title) {
+  return title
+    .replace(/^[A-Za-z_][\w]*\s+/, "X ")            // leading ClassName → "X"
+    .replace(/\s+[A-Za-z_][\w]+\s+method/, " X method")
+    .toLowerCase();
+}
+
+// Pretty version of the generic title shown to user
+function genericTitle(title) {
+  return title.replace(/^[A-Za-z_][\w]*(\s+)/, "Class$1");
+}
+
+// Pull class name out of the violation title (or fall back to file name without extension)
+function extractClassName(title, fileName) {
+  const m = title.match(/^([A-Za-z_][\w]*)\s+/);
+  if (m) return m[1];
+  return (fileName || "").replace(/\.cs$/i, "");
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const noBorder = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
 const noBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
-const thinBorder = { style: BorderStyle.SINGLE, size: 4, color: "333333" };
+const thinBorder = { style: BorderStyle.SINGLE, size: 4, color: GD_BORDER };
 const thinBorders = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
 
 // Full-width = A4 minus 1" margins = 11906 - 2*1440 = 9026 DXA
@@ -91,7 +169,7 @@ function run(text, opts = {}) {
   return new TextRun({
     text,
     font: "Calibri",
-    color: opts.color || GD_WHITE,
+    color: opts.color || GD_TEXT,
     bold: opts.bold || false,
     size: (opts.size || 11) * 2,
     highlight: opts.highlight || undefined,
@@ -145,7 +223,7 @@ function headerRow(labels, widths) {
     children: labels.map((lbl, i) =>
       cell(
         para([run(lbl, { bold: true, size: 10, color: GD_YELLOW })]),
-        { bg: "111111", width: widths[i], borders: thinBorders }
+        { bg: GD_HEADER_BG, width: widths[i], borders: thinBorders }
       )
     )
   });
@@ -175,11 +253,19 @@ function scoresAtAGlanceTable(ratings) {
 function buildSummary(data) {
   const children = [];
   const date = data.generatedAt || new Date().toISOString().slice(0,10);
+  const gameName = data.gameName || data.projectName || "Unity Project";
+  const bundleId = data.bundleId || "";
 
   // ── Cover heading
   children.push(para([
-    run(`SOLID Review  —  ${data.projectName || "Unity Project"}`, { bold: true, size: 22, color: GD_YELLOW })
-  ], { before: 0, after: 60 }));
+    run(`SOLID Review  —  ${gameName}`, { bold: true, size: 22, color: GD_YELLOW })
+  ], { before: 0, after: 40 }));
+  if (bundleId) {
+    children.push(para([
+      run("Bundle ID: ", { size: 10, color: GD_MUTED }),
+      run(bundleId, { size: 10, color: GD_TEXT_SUB, bold: true }),
+    ], { after: 20 }));
+  }
   children.push(para([run(date, { size: 10, color: GD_MUTED })], { after: 200 }));
 
   // ── Stats row: 3-col table
@@ -206,12 +292,12 @@ function buildSummary(data) {
 
   // ── Overall score
   const oc = scoreColor(data.overallScore);
-  const ol = scoreLabel(data.overallScore);
+  const status = scoreStatus(data.overallScore);
   children.push(capsLabel("OVERALL SCORE"));
   children.push(para([
     run(`${parseFloat(data.overallScore).toFixed(1)}`, { bold: true, size: 36, color: oc }),
-    run(" / 5.0   ", { size: 14, color: oc }),
-    run(ol.toUpperCase(), { bold: true, size: 11, color: oc }),
+    run(" / 5.0   ", { size: 14, color: GD_TEXT_SUB }),
+    run(status.toUpperCase(), { bold: true, size: 11, color: oc }),
   ], { after: 160 }));
 
   // ── Principle grid (2×2 table)
@@ -226,7 +312,7 @@ function buildSummary(data) {
       return cell([
         para([run(r.principle, { bold: true, size: 14, color: col2 })], { after: 40 }),
         para([run(scoreStars(r.score), { size: 11, color: col2 })], { after: 40 }),
-        para([run(scoreLabel(r.score), { size: 10, color: col2 })], { after: 40 }),
+        para([run(scoreStatus(r.score), { size: 10, color: col2 })], { after: 40 }),
         para([run(`${r.violations} violation${r.violations !== 1 ? "s" : ""}`, { size: 9, color: GD_MUTED })], { after: 0 }),
       ], { bg: GD_DARK, width: CW2[i], borders: thinBorders });
     })})]
@@ -242,7 +328,7 @@ function buildSummary(data) {
     rows: [new TableRow({ children: [
       [5, C_GREEN], [4, C_BLUE], [3, C_ORANGE], [2, C_RED_WEAK], [1, C_RED_POOR]
     ].map(([sc, col], i) =>
-      cell(para([run(`${sc} — ${scoreLabel(sc)}`, { bold: true, size: 9, color: col })]),
+      cell(para([run(`${sc} — ${scoreStatus(sc)}`, { bold: true, size: 9, color: col })]),
         { bg: GD_DARK, width: RGW[i], borders: noBorders })
     )})]
   }));
@@ -257,28 +343,47 @@ function buildSummary(data) {
 
   for (const r of ratings) {
     const col2 = scoreColor(r.score);
+    const rStatus = scoreStatus(r.score);
     children.push(para([
       run(`${r.principle}`, { bold: true, size: 12, color: col2 }),
-      run(`   Score: ${r.score}/5   ${scoreLabel(r.score)}`, { size: 10, color: col2 }),
+      run(`   Score: ${r.score}/5   ${rStatus}`, { size: 10, color: col2, bold: true }),
       run(`     ${r.violations} violation${r.violations !== 1 ? "s" : ""}`, { size: 9, color: GD_MUTED }),
     ], { before: 120, after: 40, borderBottom: col2 }));
 
     if (r.reason) {
-      children.push(para([run(r.reason, { size: 10, color: GD_MUTED })], { after: 80, indent: 360 }));
+      children.push(para([run(r.reason, { size: 11, color: GD_TEXT_SUB })], { after: 80, indent: 360 }));
     }
 
-    // Violation bullets
-    const viols = (data.fileResults || [])
+    // Violation bullets — grouped by title so we don't repeat "X has multiple responsibilities" 11 times
+    const allViols = (data.fileResults || [])
       .flatMap(f => f.violations || [])
-      .filter(v => v.principle === r.principle)
-      .slice(0, 6);
-    for (const v of viols) {
-      const sc = sevColor(v.severity);
+      .filter(v => v.principle === r.principle);
+    const grouped = groupViolations(allViols).slice(0, 8);
+
+    for (const g of grouped) {
+      const sc = sevColor(g.severity);
+      const titleSuffix = g.count > 1 ? `   (${g.count} files)` : "";
       children.push(para([
-        run("● ", { bold: true, color: sc, size: 9 }),
-        run(v.title || "", { size: 10, color: GD_WHITE }),
-        run(`   ${v.location?.fileName || ""}  line ${v.location?.startLine || ""}`, { size: 8, color: GD_MUTED }),
-      ], { after: 20, indent: 720 }));
+        run("● ", { bold: true, color: sc, size: 10 }),
+        run(g.title, { bold: true, size: 10, color: GD_TEXT }),
+        run(titleSuffix, { size: 9, color: GD_MUTED, bold: true }),
+      ], { after: 20, indent: 360 }));
+
+      // Show up to 6 locations, then "+ N more"
+      const shown = g.locations.slice(0, 6);
+      for (const loc of shown) {
+        children.push(para([
+          run("    ", { size: 9 }),
+          run(loc.className, { bold: true, size: 10, color: GD_TEXT_SUB }),
+          run("    ", { size: 9 }),
+          run(`${loc.fileName}:${loc.startLine}`, { size: 9, color: GD_TEXT_SUB }),
+        ], { after: 10, indent: 720 }));
+      }
+      if (g.locations.length > shown.length) {
+        children.push(para([
+          run(`+ ${g.locations.length - shown.length} more`, { size: 9, color: GD_MUTED, bold: true }),
+        ], { after: 20, indent: 720 }));
+      }
     }
     children.push(para([], { after: 80 }));
   }
@@ -302,8 +407,22 @@ function buildFileReport(data) {
     : 5;
 
   // ── Cover: title
+  const gameName = data.gameName || "";
+  const bundleId = data.bundleId || "";
   children.push(para([run(`SOLID Review  —  ${name}`, { bold: true, size: 22, color: GD_YELLOW })],
-    { before: 0, after: 60 }));
+    { before: 0, after: 40 }));
+  if (gameName) {
+    children.push(para([
+      run("Game: ", { size: 10, color: GD_MUTED }),
+      run(gameName, { size: 10, color: GD_TEXT_SUB, bold: true }),
+    ], { after: 16 }));
+  }
+  if (bundleId) {
+    children.push(para([
+      run("Bundle ID: ", { size: 10, color: GD_MUTED }),
+      run(bundleId, { size: 10, color: GD_TEXT_SUB, bold: true }),
+    ], { after: 16 }));
+  }
   children.push(para([run(date, { size: 10, color: GD_MUTED })], { after: 200 }));
 
   // ── Scores at a Glance
@@ -317,11 +436,12 @@ function buildFileReport(data) {
 
   // ── Overall
   const oc = scoreColor(avg);
+  const status = scoreStatus(avg);
   children.push(capsLabel("OVERALL FILE SCORE"));
   children.push(para([
     run(`${avg.toFixed(1)}`, { bold: true, size: 36, color: oc }),
-    run(" / 5.0   ", { size: 14, color: oc }),
-    run(scoreLabel(avg).toUpperCase(), { bold: true, size: 11, color: oc }),
+    run(" / 5.0   ", { size: 14, color: GD_TEXT_SUB }),
+    run(status.toUpperCase(), { bold: true, size: 11, color: oc }),
   ], { after: 160 }));
 
   // ── Rating guide
@@ -333,7 +453,7 @@ function buildFileReport(data) {
     rows: [new TableRow({ children: [
       [5, C_GREEN], [4, C_BLUE], [3, C_ORANGE], [2, C_RED_WEAK], [1, C_RED_POOR]
     ].map(([sc, col], i) =>
-      cell(para([run(`${sc} — ${scoreLabel(sc)}`, { bold: true, size: 9, color: col })]),
+      cell(para([run(`${sc} — ${scoreStatus(sc)}`, { bold: true, size: 9, color: col })]),
         { bg: GD_DARK, width: RGW[i], borders: noBorders })
     )})]
   }));
@@ -355,11 +475,12 @@ function buildFileReport(data) {
     const viols  = byPrinciple[key] || [];
 
     // Principle header
+    const pStatus = scoreStatus(score);
     children.push(para([
       run(full, { bold: true, size: 18, color: col2 }),
-      run(`   ${score}/5  ${label}`, { size: 11, color: col2 }),
+      run(`   ${score}/5  ${pStatus}`, { size: 11, color: col2, bold: true }),
     ], { before: 0, after: 40, borderBottom: col2 }));
-    children.push(para([run(rule, { size: 10, color: GD_MUTED })], { after: 160 }));
+    children.push(para([run(rule, { size: 11, color: GD_TEXT_SUB })], { after: 160 }));
 
     if (viols.length === 0) {
       children.push(para([run("✓  No violations found in this file.", { bold: true, size: 12, color: col2 })],
@@ -371,27 +492,47 @@ function buildFileReport(data) {
     children.push(para([run("THE PROBLEM", { bold: true, size: 10, color: GD_YELLOW })],
       { before: 80, after: 80 }));
 
-    for (const v of viols) {
-      const sc = sevColor(v.severity);
+    const grouped = groupViolations(viols);
+    for (const g of grouped) {
+      const sc = sevColor(g.severity);
+      const titleSuffix = g.count > 1 ? `   (${g.count} occurrences)` : "";
       // Violation title row
       children.push(para([
-        run(`[${v.severity}]  `, { bold: true, size: 9, color: sc }),
-        run(v.title || "", { bold: true, size: 10, color: GD_WHITE }),
-        run(`   ${v.location?.fileName || ""}  line ${v.location?.startLine || ""}`, { size: 8, color: GD_MUTED }),
+        run(`[${g.severity}]  `, { bold: true, size: 10, color: sc }),
+        run(g.title, { bold: true, size: 11, color: GD_TEXT }),
+        run(titleSuffix, { size: 9, color: GD_MUTED, bold: true }),
       ], { before: 80, after: 40, indent: 0 }));
 
-      // Description
-      if (v.description) {
-        children.push(para([run(v.description, { size: 10, color: GD_MUTED })],
+      // Description (one line — applies to all locations)
+      if (g.description) {
+        children.push(para([run(g.description, { size: 10, color: GD_TEXT_SUB })],
           { after: 40, indent: 360 }));
       }
 
-      // Evidence
-      if (v.evidence) {
+      // Locations — readable size, one per line
+      const shown = g.locations.slice(0, 10);
+      for (const loc of shown) {
+        children.push(para([
+          run("• ", { color: sc, size: 10, bold: true }),
+          run(loc.className, { bold: true, size: 10, color: GD_TEXT }),
+          run("    ", { size: 10 }),
+          run(`${loc.fileName}:${loc.startLine}`, { size: 10, color: GD_TEXT_SUB }),
+        ], { after: 8, indent: 360 }));
+      }
+      if (g.locations.length > shown.length) {
+        children.push(para([
+          run(`+ ${g.locations.length - shown.length} more`, { size: 9, color: GD_MUTED, bold: true }),
+        ], { after: 20, indent: 720 }));
+      }
+
+      // Evidence (if any)
+      if (g.evidence) {
         children.push(para([
           run("Evidence: ", { bold: true, size: 9, color: C_ORANGE }),
-          run(v.evidence, { size: 9, color: GD_MUTED }),
+          run(g.evidence, { size: 9, color: GD_TEXT_SUB }),
         ], { after: 80, indent: 360 }));
+      } else {
+        children.push(para([], { after: 40 }));
       }
     }
 
@@ -496,10 +637,10 @@ const data = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
 const children = mode === "summary" ? buildSummary(data) : buildFileReport(data);
 
 const doc = new Document({
-  background: { color: GD_DARK },
+  background: { color: GD_PAGE_BG },
   styles: {
     default: {
-      document: { run: { font: "Calibri", size: 22, color: GD_WHITE } }
+      document: { run: { font: "Calibri", size: 22, color: GD_TEXT } }
     }
   },
   sections: [{
