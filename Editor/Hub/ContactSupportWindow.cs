@@ -257,7 +257,7 @@ namespace GDCodeShield
         //   }
         //
         private const string WEBHOOK_URL =
-            "https://script.google.com/macros/s/AKfycbxpjMwXnytvZGWAXBEwHIvXmYCQ1faPMfofJHC7nM0_JBO-Le53mYkEWojCYGoEOBcy/exec";
+            "https://script.google.com/macros/s/AKfycbzn7mlBIZByoS39ICiYvA7RLvnCvE2uc9LQd-VnM6Ytprn5jOqYq0niTg9IjsIHRYCM/exec";
 
         private UnityWebRequest _request;
 

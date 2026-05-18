@@ -3,6 +3,28 @@ All notable changes to GD CodeShield are documented here.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-18
+### Added
+- **Adjust Integration sub-tabs** — Adjust Checklist tab now has 6 sub-tabs (Config + Init Path / Manifest / Dependencies / iOS / Ad Revenue) for deeper integration validation alongside existing config checks
+- Init Path scanner uses `EditorSceneManager` + reflection to read the live Adjust MonoBehaviour fields (including `startManually`) — accurate regardless of scene serialization format or prefab override structure
+- Manifest scanner checks Android permissions (`INTERNET`, `ACCESS_NETWORK_STATE`, `AD_ID`) including `tools:node="remove"` detection
+- Dependencies scanner checks EDM4U `*Dependencies.xml` for `play-services-ads-identifier`, `play-services-appset`, `installreferrer`
+- iOS scanner validates `AdjustSettings.asset` framework flags (AdServices, AppTrackingTransparency, StoreKit) and `iOSUserTrackingUsageDescription`
+- Ad Revenue scanner detects `Adjust.TrackAdRevenue` / `new AdjustAdRevenue` call sites and flags double-counting risk when paired with dashboard-side S2S
+- **SOLID Telemetry** — silent fire-and-forget POST after every SOLID scan to the GD CodeShield webhook (action=telemetry). Captures game name, bundle ID, overall score, S/O/L/I per-principle scores, violation count, Unity version, and platform for the GD studio usage dashboard
+- Game name (`PlayerSettings.productName`) and Bundle ID (`Application.identifier`) now appear in the Word report cover
+
+### Changed
+- **Score labels are now target-aware** across both Editor UI and exported reports: On Target / Meets Target / Below Target / Needs Work / Critical (replaces Excellent / Very Good / Acceptable / Weak / Poor). Communicates required action instead of subjective quality
+- **SOLID Word report inverted to light theme** — white page, dark text, light card surfaces. GD yellow retained as brand accent. Print-readable, no more dark-on-dark unreadable cells
+- **Violation grouping** in Word reports — same-pattern violations across multiple classes collapse into a single grouped entry with class list underneath (e.g. 6 files with "X has multiple responsibilities" now show as one entry with all 6 class names, instead of 6 repeated lines)
+- File / line references in reports are now bigger and clearly formatted (bold class name + file:line)
+- Contact Support and SOLID Telemetry both route to the same updated Apps Script deployment URL
+
+### Fixed
+- Code scanner now filters out matches inside string literals and `//` `/* */` comments (eliminates false positives from regex patterns matching their own pattern strings)
+- Adjust.cs path detection no longer hardcoded — uses `AssetDatabase.FindAssets` with `AdjustConfig.cs` sibling check so the SDK can live in any folder
+
 ## [1.0.9] - 2026-04-02
 ### Added
 - Contact Support button in Hub footer — opens standalone window, sends message directly via webhook (no email client needed)

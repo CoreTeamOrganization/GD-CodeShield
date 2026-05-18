@@ -1541,6 +1541,9 @@ namespace SolidAgent
             string projName = System.IO.Path.GetFileName(Application.dataPath.TrimEnd('/').TrimEnd('\\'));
             _report = RatingEngine.GenerateReport(_results, projName);
 
+            // Fire silent telemetry ping for the GD CodeShield usage dashboard
+            SolidTelemetry.ReportScanCompleted(_report);
+
             var first = _results.SelectMany(r => r.Violations).FirstOrDefault();
             if (first != null) { _activeId = MakeKey(first); _screen = Screen.Detail; }
             Repaint();
