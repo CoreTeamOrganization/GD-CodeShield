@@ -3,6 +3,20 @@ All notable changes to GD CodeShield are documented here.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-18
+### Added
+- **SDK Versions tab** — new first tab in Checklist showing all installed SDK versions auto-detected from your project:
+  - **GD Monetization SDK** (when present) — version read from `MonetizationInitializeOnLoad.cs`
+  - **AppLovin MAX** — Android SDK, iOS SDK, plus every mediation network adapter with their Android and iOS versions separately
+  - **Metica** — version read from `MeticaSdk.cs` (asset install) or `.tgz` reference in `Packages/manifest.json`
+  - **Adjust** — Unity Plugin, Android Native, iOS Native versions
+  - **AppMetrica** — version detection from UPM manifest or asset files
+  - **Firebase** — every installed module (Analytics, RemoteConfig, Messaging, etc.) with Unity, Android, and iOS versions per module
+- SDK detection uses `Packages/manifest.json` (UPM, file:, .tgz) as primary source, then SDK folder constants as fallback — works for both UPM and `.unitypackage` installs
+
+### Changed
+- Per-SDK version headers removed from individual SDK tabs — the dedicated SDK Versions tab now consolidates all version info in one readable view, leaving SDK tabs focused on configuration validation
+
 ## [1.1.0] - 2026-05-18
 ### Added
 - **Adjust Integration sub-tabs** — Adjust Checklist tab now has 6 sub-tabs (Config + Init Path / Manifest / Dependencies / iOS / Ad Revenue) for deeper integration validation alongside existing config checks
@@ -11,7 +25,6 @@ All notable changes to GD CodeShield are documented here.
 - Dependencies scanner checks EDM4U `*Dependencies.xml` for `play-services-ads-identifier`, `play-services-appset`, `installreferrer`
 - iOS scanner validates `AdjustSettings.asset` framework flags (AdServices, AppTrackingTransparency, StoreKit) and `iOSUserTrackingUsageDescription`
 - Ad Revenue scanner detects `Adjust.TrackAdRevenue` / `new AdjustAdRevenue` call sites and flags double-counting risk when paired with dashboard-side S2S
-- **SOLID Telemetry** — silent fire-and-forget POST after every SOLID scan to the GD CodeShield webhook (action=telemetry). Captures game name, bundle ID, overall score, S/O/L/I per-principle scores, violation count, Unity version, and platform for the GD studio usage dashboard
 - Game name (`PlayerSettings.productName`) and Bundle ID (`Application.identifier`) now appear in the Word report cover
 
 ### Changed
@@ -19,7 +32,6 @@ All notable changes to GD CodeShield are documented here.
 - **SOLID Word report inverted to light theme** — white page, dark text, light card surfaces. GD yellow retained as brand accent. Print-readable, no more dark-on-dark unreadable cells
 - **Violation grouping** in Word reports — same-pattern violations across multiple classes collapse into a single grouped entry with class list underneath (e.g. 6 files with "X has multiple responsibilities" now show as one entry with all 6 class names, instead of 6 repeated lines)
 - File / line references in reports are now bigger and clearly formatted (bold class name + file:line)
-- Contact Support and SOLID Telemetry both route to the same updated Apps Script deployment URL
 
 ### Fixed
 - Code scanner now filters out matches inside string literals and `//` `/* */` comments (eliminates false positives from regex patterns matching their own pattern strings)

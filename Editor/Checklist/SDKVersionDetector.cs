@@ -29,6 +29,7 @@ namespace GDChecklist
         private static readonly Dictionary<int, System.Func<SDKVersion>> _byTab =
             new Dictionary<int, System.Func<SDKVersion>>
         {
+            { -1, DetectGDMonetization },  // Special: shown first on SDK Versions tab if installed; not a real tab
             { 0, DetectAppLovin },
             { 1, DetectMetica },
             { 2, DetectAdjust },
@@ -48,9 +49,9 @@ namespace GDChecklist
                 _cache[tabIndex] = v;
                 return v;
             }
-            catch (System.Exception ex)
+            catch
             {
-                Debug.LogWarning("[SDKVersionDetector] " + ex);
+                // Silently swallow — detection failures should not surface in Console
                 return null;
             }
         }
@@ -60,6 +61,43 @@ namespace GDChecklist
         // ════════════════════════════════════════════════════════════════════════
         //  PER-SDK DETECTORS
         // ════════════════════════════════════════════════════════════════════════
+
+        // GD Monetization SDK — shown first on SDK Versions tab when present.
+        // Marker file: MonetizationInitializeOnLoad.cs with `public const string Version = "X.Y.Z";`
+        // Default path: Assets/GDMonetization/Runtime/Scripts/MonetizationInitializeOnLoad.cs
+        // Falls back to anywhere under Assets/ in case the package is installed at a custom location.
+        private static SDKVersion DetectGDMonetization()
+        {
+            const string defaultPath = "Assets/GDMonetization/Runtime/Scripts/MonetizationInitializeOnLoad.cs";
+            string foundPath = null;
+
+            if (File.Exists(defaultPath)) foundPath = defaultPath;
+
+            if (foundPath == null)
+            {
+                try
+                {
+                    var hits = Directory.GetFiles("Assets", "MonetizationInitializeOnLoad.cs", SearchOption.AllDirectories);
+                    if (hits.Length > 0) foundPath = hits[0].Replace('\\', '/');
+                }
+                catch { }
+            }
+
+            if (foundPath == null) return null;
+
+            string text;
+            try { text = File.ReadAllText(foundPath); }
+            catch { return null; }
+
+            var m = Regex.Match(text, @"public\s+const\s+string\s+Version\s*=\s*""([\d\.]+)""");
+            if (!m.Success) return null;
+
+            return new SDKVersion {
+                Name = "GD Monetization SDK",
+                Version = m.Groups[1].Value,
+                Source = "MonetizationInitializeOnLoad.cs"
+            };
+        }
 
         // AppLovin MAX — Assets/MaxSdk/AppLovin/Editor/Dependencies.xml has separate Android + iOS versions
         private static SDKVersion DetectAppLovin()
@@ -349,6 +387,7 @@ namespace GDChecklist
             if (!Directory.Exists(folder)) return null;
 
             string[] preferred = {
+                "MonetizationInitializeOnLoad.cs",
                 "MaxSdk.cs", "MaxSdkUtils.cs",
                 "AdjustConfig.cs", "Adjust.cs", "AdjustUtils.cs",
                 "VersionInfo.cs", "FirebaseApp.cs",

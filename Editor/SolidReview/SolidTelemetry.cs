@@ -23,11 +23,7 @@ namespace SolidAgent
 
         public static void ReportScanCompleted(SolidReport report)
         {
-            if (report == null)
-            {
-                Debug.Log("[CodeShield Telemetry] report is null — skipping");
-                return;
-            }
+            if (report == null) return;
 
             try
             {
@@ -60,9 +56,6 @@ namespace SolidAgent
                     + "&platform="      + UnityWebRequest.EscapeURL(platform)
                     + "&timestamp="     + UnityWebRequest.EscapeURL(ts);
 
-                Debug.Log("[CodeShield Telemetry] POSTing to " + WEBHOOK_URL);
-                Debug.Log("[CodeShield Telemetry] Payload: " + form);
-
                 byte[] raw = System.Text.Encoding.UTF8.GetBytes(form);
                 var req = new UnityWebRequest(WEBHOOK_URL, "POST");
                 req.uploadHandler   = new UploadHandlerRaw(raw);
@@ -73,37 +66,12 @@ namespace SolidAgent
 
                 op.completed += _ =>
                 {
-                    try
-                    {
-#if UNITY_2020_1_OR_NEWER
-                        if (req.result != UnityWebRequest.Result.Success)
-                        {
-                            Debug.LogWarning($"[CodeShield Telemetry] FAILED — result={req.result}, error={req.error}, code={req.responseCode}");
-                        }
-                        else
-                        {
-                            Debug.Log($"[CodeShield Telemetry] OK — code={req.responseCode}, body={req.downloadHandler.text}");
-                        }
-#else
-                        if (req.isNetworkError || req.isHttpError)
-                            Debug.LogWarning($"[CodeShield Telemetry] FAILED — error={req.error}, code={req.responseCode}");
-                        else
-                            Debug.Log($"[CodeShield Telemetry] OK — code={req.responseCode}, body={req.downloadHandler.text}");
-#endif
-                    }
-                    catch (System.Exception cbEx)
-                    {
-                        Debug.LogWarning("[CodeShield Telemetry] Callback error: " + cbEx.Message);
-                    }
-                    finally
-                    {
-                        try { req.Dispose(); } catch { }
-                    }
+                    try { req.Dispose(); } catch { }
                 };
             }
-            catch (System.Exception ex)
+            catch
             {
-                Debug.LogWarning("[CodeShield Telemetry] Exception while sending: " + ex.Message);
+                // Silently swallow — telemetry must never disrupt user workflow or surface in Console
             }
         }
 

@@ -417,10 +417,21 @@ namespace GDChecklist
             // Section headers: 18px each, plus 6px gap after each section
             float contentH = 16; // top padding
 
-            // Reserve scroll height for SDK Versions synthesis tab (5 SDK sections, each variable height)
+            // Reserve scroll height for SDK Versions synthesis tab (5 SDK sections + optional GD Monetization)
             if (currentTabIndex == TAB_SDK_VERSIONS)
             {
                 int totalLines = 0;
+                int sectionCount = 5;
+
+                // Optional GD Monetization at the top
+                var gdMon = SDKVersionDetector.GetVersionForTab(-1);
+                if (gdMon != null)
+                {
+                    sectionCount++;
+                    int gdMods = gdMon.Modules?.Count ?? 0;
+                    totalLines += gdMods > 0 ? gdMods : 1;
+                }
+
                 for (int i = 0; i <= 4; i++)
                 {
                     var sv = SDKVersionDetector.GetVersionForTab(i);
@@ -428,7 +439,7 @@ namespace GDChecklist
                     totalLines += modCount > 0 ? modCount : 1;
                 }
                 // Each SDK section: name header(28) + lines * 18 + section gap(14)
-                contentH += 5 * (28f + 14f) + totalLines * 18f;
+                contentH += sectionCount * (28f + 14f) + totalLines * 18f;
             }
 
             string lastSec = null;
@@ -501,7 +512,15 @@ namespace GDChecklist
                 new GUIStyle(_sMuted) { fontSize = 10, normal = { textColor = C_MUTED } });
             y += 22;
 
-            // Render each SDK section in order
+            // GD Monetization SDK — shown FIRST when present (sentinel index -1)
+            var gdMon = SDKVersionDetector.GetVersionForTab(-1);
+            if (gdMon != null)
+            {
+                DrawSdkSection(gdMon, x, ref y, w);
+                y += 8;
+            }
+
+            // Render each main SDK section in order
             for (int tabIndex = 0; tabIndex <= 4; tabIndex++)
             {
                 var sv = SDKVersionDetector.GetVersionForTab(tabIndex);
@@ -510,7 +529,7 @@ namespace GDChecklist
                     sv = new SDKVersion { Name = SdkNameForTab(tabIndex) };
                 }
                 DrawSdkSection(sv, x, ref y, w);
-                y += 8; // gap between sections
+                y += 8;
             }
         }
 
@@ -1393,6 +1412,10 @@ namespace GDChecklist
                 _tab       = 0;
                 _appScreen = AppScreen.Results;
                 Repaint();
+
+                // Fire silent telemetry — SDK versions for the GD studio dashboard.
+                // Runs after detector cache is warm; non-blocking, errors swallowed.
+                ChecklistTelemetry.ReportChecklistScanCompleted();
             }
             finally
             {
