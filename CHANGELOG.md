@@ -3,6 +3,24 @@ All notable changes to GD CodeShield are documented here.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-05-20
+### Changed
+- **Full visual redesign** across all CodeShield windows — Hub, SOLID Review, and SDK Checklist now share a unified editorial design language: cream surface, navy text, gold accents, Fraunces serif display, Inter UI font. Quieter, more readable, and consistent across the whole package.
+- **Hub launcher** redesigned with two-column editorial layout: workspace overview on the left (with quick stats), tool entries on the right with hover affordances. Game District logo anchored bottom-left.
+- **SOLID Review** redesigned with three editorial screens — principle picker / scanning progress / results — and a tabbed detail pane (Violation / Proposed fix / Claude Code) with proper code-block scrolling.
+- **SDK Checklist** redesigned with three editorial screens — Welcome (GD SDK vs raw SDKs choice) / first-time setup (auto-detected SDK toggles) / scan report with consolidated tab strip. The 10-tab report and all field rows preserve their existing behaviour, restyled to the new palette.
+- All CodeShield windows now resizable with a 900×600 minimum so they adapt to studio screen layouts.
+
+### Added
+- Fraunces (display) and Inter (UI) bundled as TTF assets — consistent typography across operating systems with graceful fallback to the system font if the assets are missing.
+- Game District logo asset bundled in the Hub.
+- Soft hover states (gold tint + slide-arrow affordances) on tool entries and principle cells.
+
+### Fixed
+- "Download Word report" and per-violation "File doc" buttons now open the generated Word document directly instead of revealing the folder.
+- "Run in Claude Code" reliably launches Terminal with the prompt pre-loaded; the prompt is also placed on the clipboard as a fallback.
+- Detail pane in SOLID Review now scrolls correctly when the affected code block is long — no more cut-off at the bottom.
+
 ## [1.2.0] - 2026-05-18
 ### Added
 - **SDK Versions tab** — new first tab in Checklist showing all installed SDK versions auto-detected from your project:

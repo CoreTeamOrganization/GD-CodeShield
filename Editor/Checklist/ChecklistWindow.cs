@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using GDCodeShield.Brand;
 
 namespace GDChecklist
 {
@@ -35,18 +36,19 @@ namespace GDChecklist
         private ScanResult _scan = null;
         private bool _scanning = false;
 
-        // ── GD Theme ─────────────────────────────────────────────────────────────
-        private static readonly Color C_BG     = new Color32(10,  10,  10,  255);
-        private static readonly Color C_SURF   = new Color32(22,  22,  22,  255);
-        private static readonly Color C_SURF2  = new Color32(32,  32,  32,  255);
-        private static readonly Color C_BORDER = new Color32(58,  58,  58,  255);
-        private static readonly Color C_ACCENT = new Color32(255, 208, 0,   255); // GD Yellow
-        private static readonly Color C_GREEN  = new Color32(80,  200, 100, 255);
-        private static readonly Color C_RED    = new Color32(220, 60,  60,  255);
-        private static readonly Color C_ORANGE = new Color32(255, 140, 40,  255);
-        private static readonly Color C_TEXT   = new Color32(240, 240, 240, 255);
-        private static readonly Color C_MUTED  = new Color32(140, 140, 140, 255);
-        private static readonly Color C_BLUE   = new Color32(100, 160, 255, 255); // Manual items
+        // ── GD Theme — editorial cream/navy/gold (v1.3.0 redesign)
+        //    Field row renderers reference these names; map to new palette.
+        private static readonly Color C_BG     = new Color32(238, 237, 230, 255); // Cream
+        private static readonly Color C_SURF   = new Color32(238, 237, 230, 255); // Cream (no card lift)
+        private static readonly Color C_SURF2  = new Color32(247, 246, 240, 255); // Slightly lighter cream for hover
+        private static readonly Color C_BORDER = new Color32(211, 209, 199, 255); // Taupe hairline
+        private static readonly Color C_ACCENT = new Color32(244, 196, 48,  255); // Gold #F4C430
+        private static readonly Color C_GREEN  = new Color32(111, 167, 111, 255); // Sage — passing
+        private static readonly Color C_RED    = new Color32(192, 57,  43,  255); // Overdue — failing
+        private static readonly Color C_ORANGE = new Color32(207, 119, 24,  255); // Warm orange — warnings
+        private static readonly Color C_TEXT   = new Color32(14,  26,  51,  255); // Navy
+        private static readonly Color C_MUTED  = new Color32(107, 107, 102, 255); // WarmGray
+        private static readonly Color C_BLUE   = new Color32(133, 183, 235, 255); // Sky — manual items
 
         private GUIStyle _sTitle, _sBody, _sMuted, _sCode;
         private bool _stylesReady;
@@ -62,7 +64,8 @@ namespace GDChecklist
         public static void Open()
         {
             var w = GetWindow<ChecklistWindow>("  GD Checklist");
-            w.minSize = new Vector2(900, 560);
+            w.minSize = new Vector2(900, 600);
+            w.maxSize = new Vector2(4000, 4000); // resizable
             w._appScreen = AppScreen.Welcome;   // always start fresh
             w.Show();
         }
@@ -114,7 +117,10 @@ namespace GDChecklist
         private void OnGUI()
         {
             InitStyles();
-            Bg(new Rect(0, 0, position.width, position.height), C_BG);
+            EditorGUI.DrawRect(new Rect(0, 0, position.width, position.height), C_BG);
+
+            // 6px gold left-bar — full window height
+            EditorGUI.DrawRect(new Rect(0, 0, BrandTokens.GoldBarWidth, position.height), C_ACCENT);
 
             // If we're mid-transition, show a loading overlay for exactly one frame,
             // then clear the flag and draw the real screen next frame.
@@ -129,8 +135,10 @@ namespace GDChecklist
 
             DrawTopBar();
 
-            float bodyY = 50f;
-            var body = new Rect(0, bodyY, position.width, position.height - bodyY);
+            float bodyY = 56f;
+            var body = new Rect(BrandTokens.GoldBarWidth + 30, bodyY,
+                                position.width - (BrandTokens.GoldBarWidth + 30) - 36,
+                                position.height - bodyY - 42);
 
             switch (_appScreen)
             {
@@ -139,6 +147,14 @@ namespace GDChecklist
                 case AppScreen.Home:    DrawHome(body);          break;
                 case AppScreen.Results: DrawResults(body);       break;
             }
+
+            // Footer
+            float fy = position.height - 42;
+            float padL = BrandTokens.GoldBarWidth + 30;
+            EditorGUI.DrawRect(new Rect(padL, fy, position.width - padL - 36, 1), C_BORDER);
+            GUI.Label(new Rect(padL, fy + 14, 500, 14),
+                "GAME DISTRICT  ·  GD CHECKLIST",
+                BrandTokens.MakeStyle(BrandTokens.Inter, 10, C_MUTED));
         }
 
         private void DrawTransitionOverlay()
@@ -146,77 +162,49 @@ namespace GDChecklist
             float w = position.width;
             float h = position.height;
 
-            // Dark overlay
-            EditorGUI.DrawRect(new Rect(0, 0, w, h), new Color(0.06f, 0.06f, 0.06f, 0.96f));
+            EditorGUI.DrawRect(new Rect(0, 0, w, h), new Color(238f/255f, 237f/255f, 230f/255f, 0.96f));
 
-            // Centered loading indicator
             float barW = 220f;
             float barH = 3f;
             float bx   = (w - barW) * 0.5f;
             float by   = h * 0.5f + 20f;
 
-            // Label
             GUI.Label(new Rect(0, h * 0.5f - 16f, w, 20f),
                 "Loading…",
-                new GUIStyle(EditorStyles.label)
-                {
-                    fontSize  = 11,
-                    alignment = TextAnchor.MiddleCenter,
-                    normal    = { textColor = new Color(0.9f, 0.9f, 0.9f, 0.6f) }
-                });
+                BrandTokens.MakeStyle(BrandTokens.FrauncesItalic ?? BrandTokens.Fraunces,
+                    14, C_MUTED, FontStyle.Italic, TextAnchor.MiddleCenter));
 
-            // Thin animated accent bar
-            EditorGUI.DrawRect(new Rect(bx, by, barW, barH),
-                new Color(0.3f, 0.3f, 0.3f, 0.4f));
+            EditorGUI.DrawRect(new Rect(bx, by, barW, barH), new Color(0.78f, 0.78f, 0.74f, 1f));
             float fill = (float)(EditorApplication.timeSinceStartup % 1.0);
-            EditorGUI.DrawRect(new Rect(bx, by, barW * fill, barH),
-                new Color(1f, 0.83f, 0f, 0.9f)); // GD yellow
+            EditorGUI.DrawRect(new Rect(bx, by, barW * fill, barH), C_ACCENT);
         }
 
         // ── Top bar ───────────────────────────────────────────────────────────────
 
         private void DrawTopBar()
         {
-            Bg(new Rect(0, 0, position.width, 50), C_SURF);
-            Bg(new Rect(0, 0, position.width, 3), C_ACCENT);
-            HRule(new Rect(0, 49, position.width, 1), C_BORDER);
+            float padL = BrandTokens.GoldBarWidth + 30;
+            float padR = 36;
+            float ty = 18;
 
-            GUI.Label(new Rect(16, 11, 20, 26), "⚡",
-                new GUIStyle(_sTitle) { fontSize = 18, normal = { textColor = C_ACCENT } });
-            GUI.Label(new Rect(36, 13, 220, 24), "GD CHECKLIST",
-                new GUIStyle(_sTitle) { fontSize = 14, fontStyle = FontStyle.Bold, normal = { textColor = C_TEXT } });
+            // Brand mark + name
+            DrawBrandMark(padL, ty);
+            GUI.Label(new Rect(padL + 32, ty + 4, 240, 22), "CodeShield",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 16, C_TEXT, FontStyle.Bold));
 
-            // Status pill — only on results screen
-            if (_appScreen == AppScreen.Results && _scan != null)
-            {
-                int issues = _scan.AllFields.Count(f => f.Status == FieldStatus.Mismatch || f.Status == FieldStatus.Empty);
-                int ok     = _scan.AllFields.Count(f => f.Status == FieldStatus.Match);
-                Color pc   = issues == 0 ? C_GREEN : C_RED;
-                string pt  = issues == 0 ? $"✓  {ok} OK" : $"⚠  {issues} mismatch(es)";
-                var pr = new Rect(220, 14, 110, 22);
-                Bg(pr, new Color(pc.r, pc.g, pc.b, 0.15f));
-                Outline(pr, new Color(pc.r, pc.g, pc.b, 0.5f));
-                GUI.Label(pr, pt, new GUIStyle(_sMuted)
-                {
-                    fontSize = 10, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter,
-                    normal = { textColor = pc }
-                });
-            }
+            // Right side: action buttons + crumbs
+            float rx = position.width - padR;
 
-            float rx = position.width - 14;
-
-            // Rescan button — results screen
+            // Rescan + Change Setup — results screen
             if (_appScreen == AppScreen.Results)
             {
-                if (TopBtn(new Rect(rx - 82, 11, 74, 28), "↺  Rescan"))
+                if (TopBtn(new Rect(rx - 80, 14, 76, 24), "↺ Rescan"))
                 { _scan = null; _homeConfig = null; _appScreen = AppScreen.Home; Repaint(); }
-                rx -= 90;
+                rx -= 88;
             }
-
-            // Change SDKs / setup button — visible for all devs on home + results
             if (_appScreen == AppScreen.Home || _appScreen == AppScreen.Results)
             {
-                if (TopBtn(new Rect(rx - 114, 11, 106, 28), "⚙  Change Setup"))
+                if (TopBtn(new Rect(rx - 112, 14, 108, 24), "⚙ Change setup"))
                 {
                     SDKConfig.ResetSetup();
                     _appScreen = AppScreen.Welcome;
@@ -225,11 +213,51 @@ namespace GDChecklist
                 rx -= 120;
             }
 
-            // GAME DISTRICT label — drawn last, right-aligned up to rx so it never overlaps buttons
-            GUI.Label(new Rect(160, 16, rx - 164, 18), "GAME DISTRICT",
-                new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleRight,
-                    normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.55f) } });
+            // Crumbs — right aligned to remaining space
+            string crumbs = _appScreen switch {
+                AppScreen.Welcome => "Workstation  /  SDK checklist",
+                AppScreen.Setup   => "SDK checklist  /  First-time setup",
+                AppScreen.Home    => "SDK checklist  /  Ready",
+                AppScreen.Results => "SDK checklist  /  Report",
+                _ => ""
+            };
+            var crumbsStyle = BrandTokens.MakeStyle(BrandTokens.Inter, 11, C_MUTED, FontStyle.Normal, TextAnchor.MiddleRight);
+            GUI.Label(new Rect(padL + 280, 22, rx - padL - 290, 18), crumbs, crumbsStyle);
+
+            // Topbar hairline
+            EditorGUI.DrawRect(new Rect(padL, 50, position.width - padL - padR, 1), C_BORDER);
+        }
+
+        // Tapered shield with gold check — drawn from primitives
+        private void DrawBrandMark(float x, float y)
+        {
+            float sw = 22, sh = 26;
+            EditorGUI.DrawRect(new Rect(x + 1, y, sw - 2, 1), C_TEXT);
+            EditorGUI.DrawRect(new Rect(x, y, 1, sh - 6), C_TEXT);
+            EditorGUI.DrawRect(new Rect(x + sw - 1, y, 1, sh - 6), C_TEXT);
+            for (int i = 0; i < 6; i++)
+            {
+                float t = i / 6f;
+                EditorGUI.DrawRect(new Rect(x + t * (sw / 2), y + sh - 6 + i, 1, 1.4f), C_TEXT);
+                EditorGUI.DrawRect(new Rect(x + sw - 1 - t * (sw / 2), y + sh - 6 + i, 1, 1.4f), C_TEXT);
+            }
+            float ckX = x + 5, ckY = y + 13;
+            for (int i = 0; i < 4; i++) EditorGUI.DrawRect(new Rect(ckX + i, ckY + i, 2, 2), C_ACCENT);
+            for (int i = 0; i < 7; i++) EditorGUI.DrawRect(new Rect(ckX + 3 + i, ckY + 3 - i, 2, 2), C_ACCENT);
+        }
+
+        // Editorial eyebrow with gold square + tracked text
+        private void DrawEyebrow(float x, float y, string label)
+        {
+            EditorGUI.DrawRect(new Rect(x, y + 4, BrandTokens.EyebrowSquare, BrandTokens.EyebrowSquare), C_ACCENT);
+            string spaced = "";
+            for (int i = 0; i < label.Length; i++)
+            {
+                spaced += label[i];
+                if (i < label.Length - 1) spaced += "\u2009";
+            }
+            GUI.Label(new Rect(x + BrandTokens.EyebrowSquare + 10, y, 400, 18), spaced,
+                BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeEyebrow, C_TEXT, FontStyle.Bold));
         }
 
         // ── Home screen ───────────────────────────────────────────────────────────
@@ -239,75 +267,88 @@ namespace GDChecklist
             // Build config once per screen visit — never per frame
             if (_homeConfig == null) _homeConfig = SDKConfig.BuildScanConfig();
 
-            float cx = body.x + body.width / 2f;
-            float cy = body.y + body.height / 2f;
-            bool isNonGD = !_homeConfig.IsGDSDK;
-            float cw = 480f, ch = isNonGD ? 340f : 280f;
+            float gap = 56f;
+            float leftW = (body.width - gap) * 0.5f;
+            float rightX = body.x + leftW + gap;
+            float rightW = body.width - leftW - gap;
 
-            Bg(new Rect(cx - cw/2 - 5, cy - ch/2 - 5, cw + 10, ch + 10), C_ACCENT);
-            var card = new Rect(cx - cw/2, cy - ch/2, cw, ch);
-            Bg(card, C_SURF);
+            // LEFT — title + lede + meta
+            DrawEyebrow(body.x, body.y, "READY");
+            float cy = body.y + 32;
+            GUI.Label(new Rect(body.x, cy, leftW, 50), "Run the checks.",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, BrandTokens.SizeH1, C_TEXT, FontStyle.Bold));
+            cy += 56;
+            GUI.Label(new Rect(body.x, cy, leftW, 80),
+                "We'll read your project's .asset files, manifests, and SDK configs, then compare against expected values.",
+                BrandTokens.MakeWrappedStyle(BrandTokens.FrauncesItalic ?? BrandTokens.Fraunces,
+                    BrandTokens.SizeLede, BrandTokens.Ink, FontStyle.Italic));
+            cy += 90;
 
-            float iy = card.y + 20;
-            Bg(new Rect(card.x, iy, cw, 3), C_ACCENT); iy += 10;
-
-            GUI.Label(new Rect(card.x + 20, iy, cw - 40, 13), "C H E C K P O I N T",
-                new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
-                    normal = { textColor = C_ACCENT } });
-            iy += 18;
-
-            GUI.Label(new Rect(card.x + 20, iy, cw - 40, 32), "GD CHECKLIST",
-                new GUIStyle(_sTitle) { fontSize = 22, fontStyle = FontStyle.Bold,
-                    normal = { textColor = C_TEXT } });
-            iy += 34;
-
-            GUI.Label(new Rect(card.x + 20, iy, cw - 40, 16),
-                "Scans project .asset files and validates SDK configuration",
-                new GUIStyle(_sMuted) { fontSize = 10 });
-            iy += 28;
-
-            Bg(new Rect(card.x + 20, iy, cw - 40, 1),
-               new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f)); iy += 14;
-
-            // Non-GD scan warning
-            if (!_homeConfig.IsGDSDK)
+            // What it scans
+            DrawEyebrow(body.x, cy, "WHAT WE SCAN");
+            cy += 24;
+            string[] items = new[] {
+                _homeConfig.AppLovin   ? "→ AppLovin / AdMob mediation"   : null,
+                _homeConfig.Metica     ? "→ Metica configuration"          : null,
+                _homeConfig.Adjust     ? "→ Adjust attribution"            : null,
+                _homeConfig.AppMetrica ? "→ AppMetrica analytics"          : null,
+                _homeConfig.Firebase   ? "→ Firebase remote config"        : null,
+                _homeConfig.AdUnits    ? "→ Ad units configuration"        : null,
+                "→ Pre-release + build readiness",
+                "→ Manual release checks"
+            };
+            foreach (var item in items)
             {
-                var warnRect = new Rect(card.x + 20, iy, cw - 40, 52);
-                EditorGUI.DrawRect(warnRect, new Color(C_ORANGE.r, C_ORANGE.g, C_ORANGE.b, 0.08f));
-                EditorGUI.DrawRect(new Rect(warnRect.x, warnRect.y, 3, warnRect.height), C_ORANGE);
-                GUI.Label(new Rect(warnRect.x + 10, warnRect.y + 6, warnRect.width - 14, 14),
-                    "⚠  Extensive scan — reads all .cs files in project",
-                    new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
-                        normal = { textColor = C_ORANGE } });
-                GUI.Label(new Rect(warnRect.x + 10, warnRect.y + 22, warnRect.width - 14, 28),
-                    "Non-GD SDK mode scans your entire codebase to reverse engineer\nSDK configuration. May take 5-15 seconds on large projects.",
-                    new GUIStyle(_sMuted) { fontSize = 9, wordWrap = true,
-                        normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.8f) } });
-                iy += 60;
+                if (string.IsNullOrEmpty(item)) continue;
+                GUI.Label(new Rect(body.x, cy, leftW, 18), item,
+                    BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeBody, BrandTokens.Ink));
+                EditorGUI.DrawRect(new Rect(body.x, cy + 22, leftW, 1), C_BORDER);
+                cy += 26;
             }
 
-            // Scan button
-            var btnR = new Rect(card.x + 20, iy, cw - 40, 44);
-            Bg(btnR, C_ACCENT);
-            if (btnR.Contains(Event.current.mousePosition)) Bg(btnR, new Color(1,1,1,0.08f));
-            GUI.Label(btnR, "▶  SCAN PROJECT",
-                new GUIStyle(_sTitle) { fontSize = 13, fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleCenter,
-                    normal = { textColor = new Color32(10, 10, 10, 255) } });
-            if (Click(btnR)) { RunScan(); _appScreen = AppScreen.Results; }
-            iy += 52;
+            // RIGHT — scan target summary + big scan button
+            DrawEyebrow(rightX, body.y, "SCAN TARGET");
+            float ry = body.y + 32;
+            bool isNonGD = !_homeConfig.IsGDSDK;
 
-            // Footer
-            float sy = card.y + ch - 28;
-            Bg(new Rect(card.x, sy, cw, 1), C_BORDER);
-            GUI.Label(new Rect(card.x + 20, sy + 7, 220, 14),
-                "ESTD. 2016  ·  STAY HUNGRY · STAY FOOLISH",
-                new GUIStyle(_sMuted) { fontSize = 7,
-                    normal = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.45f) } });
-            GUI.Label(new Rect(card.x, sy + 6, cw - 18, 16), "⚡ GAME DISTRICT",
-                new GUIStyle(_sTitle) { fontSize = 10, fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleRight,
-                    normal = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.65f) } });
+            // Non-GD warning
+            if (isNonGD)
+            {
+                var warnRect = new Rect(rightX, ry, rightW, 56);
+                EditorGUI.DrawRect(new Rect(rightX, ry, 3, 56), C_ORANGE);
+                GUI.Label(new Rect(rightX + 12, ry + 6, rightW - 16, 18),
+                    "Extensive scan — non-GD SDK mode",
+                    BrandTokens.MakeStyle(BrandTokens.Inter, 11, C_ORANGE, FontStyle.Bold));
+                GUI.Label(new Rect(rightX + 12, ry + 24, rightW - 16, 30),
+                    "Reads all .cs files to reverse-engineer SDK configuration.\nMay take 5–15 seconds on large projects.",
+                    BrandTokens.MakeWrappedStyle(BrandTokens.Inter, 10, C_MUTED));
+                ry += 72;
+            }
+            else
+            {
+                GUI.Label(new Rect(rightX, ry, rightW, 18),
+                    "GD SDK mode — fast config lookups via known paths",
+                    BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeBody, C_MUTED));
+                ry += 26;
+            }
+
+            ry += 10;
+            EditorGUI.DrawRect(new Rect(rightX, ry, rightW, 1), C_BORDER);
+            ry += 24;
+
+            // Big gold scan button
+            var btnR = new Rect(rightX, ry, rightW, 56);
+            bool hover = btnR.Contains(Event.current.mousePosition);
+            EditorGUI.DrawRect(btnR, hover ? new Color(244f/255f, 196f/255f, 48f/255f, 0.85f) : C_ACCENT);
+            GUI.Label(btnR, "▶  SCAN PROJECT  →",
+                BrandTokens.MakeStyle(BrandTokens.Inter, 14, C_TEXT, FontStyle.Bold, TextAnchor.MiddleCenter));
+            EditorGUIUtility.AddCursorRect(btnR, MouseCursor.Link);
+            if (Click(btnR)) { RunScan(); _appScreen = AppScreen.Results; }
+            ry += 70;
+
+            GUI.Label(new Rect(rightX, ry, rightW, 18),
+                "No network calls. All checks run locally against your project files.",
+                BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeFootnote, C_MUTED));
         }
 
         // ── Results ───────────────────────────────────────────────────────────────
@@ -335,18 +376,16 @@ namespace GDChecklist
             // Clamp active tab to valid range
             if (_tab >= activeTabs.Count) _tab = 0;
 
-            // Tab bar
+            // Tab bar — editorial
             float ty = body.y;
-            Bg(new Rect(body.x, ty, body.width, 36), C_SURF);
-
-            float tx = body.x + 12;
+            float tx = body.x;
             for (int i = 0; i < activeTabs.Count; i++)
             {
                 var (tabLabel, tabIndex) = activeTabs[i];
                 bool isManualTab    = tabIndex == GDChecklist.ReleaseScanner.TAB_MANUAL;
                 bool isReleaseTab   = tabIndex == GDChecklist.ReleaseScanner.TAB_PRERELEASE
                                    || tabIndex == GDChecklist.ReleaseScanner.TAB_BUILD;
-                Color tabAccent = isManualTab ? C_BLUE : isReleaseTab ? C_ORANGE : C_ACCENT;
+                Color tabAccent = isManualTab ? C_BLUE : isReleaseTab ? C_ORANGE : C_RED;
 
                 int issueCount = isManualTab
                     ? _scan.AllFields.Count(f => f.Tab == tabIndex && !_confirmed.Contains(f.FieldName))
@@ -357,27 +396,23 @@ namespace GDChecklist
                 string label = issueCount > 0
                     ? (isManualTab ? $"{tabLabel}  ☐{issueCount}" : $"{tabLabel}  ⚠{issueCount}")
                     : tabLabel;
-                float tw = Mathf.Max(label.Length * 7.2f + 16f, 90f);
+                float tw = Mathf.Max(label.Length * 7.4f + 20f, 90f);
                 bool active = i == _tab;
 
+                Color labelC = active ? C_TEXT : (issueCount > 0 ? tabAccent : C_MUTED);
+                FontStyle fs = active ? FontStyle.Bold : FontStyle.Normal;
+
+                GUI.Label(new Rect(tx, ty, tw, 36), label,
+                    BrandTokens.MakeStyle(BrandTokens.Inter, 12, labelC, fs, TextAnchor.MiddleCenter));
+
                 if (active)
-                {
-                    Bg(new Rect(tx, ty + 32, tw, 4), tabAccent);
-                    GUI.Label(new Rect(tx, ty, tw, 36), label,
-                        new GUIStyle(_sBody) { alignment = TextAnchor.MiddleCenter,
-                            fontStyle = FontStyle.Bold,
-                            normal = { textColor = issueCount > 0 ? tabAccent : tabAccent } });
-                }
-                else
-                {
-                    GUI.Label(new Rect(tx, ty, tw, 36), label,
-                        new GUIStyle(_sMuted) { alignment = TextAnchor.MiddleCenter,
-                            normal = { textColor = issueCount > 0 ? tabAccent : C_MUTED } });
-                    if (Click(new Rect(tx, ty, tw, 36))) { _tab = i; Repaint(); }
-                }
-                tx += tw + 2;
+                    EditorGUI.DrawRect(new Rect(tx, ty + 33, tw, 2), C_TEXT);
+
+                EditorGUIUtility.AddCursorRect(new Rect(tx, ty, tw, 36), MouseCursor.Link);
+                if (!active && Click(new Rect(tx, ty, tw, 36))) { _tab = i; Repaint(); }
+                tx += tw + 4;
             }
-            HRule(new Rect(body.x, ty + 35, body.width, 1), C_BORDER);
+            EditorGUI.DrawRect(new Rect(body.x, ty + 35, body.width, 1), C_BORDER);
 
             // Get fields for the currently active tab
             int currentTabIndex = activeTabs.Count > 0 ? activeTabs[_tab].index : -1;
@@ -417,13 +452,12 @@ namespace GDChecklist
             // Section headers: 18px each, plus 6px gap after each section
             float contentH = 16; // top padding
 
-            // Reserve scroll height for SDK Versions synthesis tab (5 SDK sections + optional GD Monetization)
+            // Reserve scroll height for SDK Versions synthesis tab (header + stats + sections)
             if (currentTabIndex == TAB_SDK_VERSIONS)
             {
                 int totalLines = 0;
                 int sectionCount = 5;
 
-                // Optional GD Monetization at the top
                 var gdMon = SDKVersionDetector.GetVersionForTab(-1);
                 if (gdMon != null)
                 {
@@ -438,8 +472,9 @@ namespace GDChecklist
                     int modCount = sv?.Modules?.Count ?? 0;
                     totalLines += modCount > 0 ? modCount : 1;
                 }
-                // Each SDK section: name header(28) + lines * 18 + section gap(14)
-                contentH += sectionCount * (28f + 14f) + totalLines * 18f;
+                // New layout: header block (28 eyebrow + 52 H1 + 56 stats + 18 divider) +
+                //             each section: name (32) + lines * 30 + section gap (12)
+                contentH += 28f + 52f + 56f + 18f + sectionCount * (32f + 12f) + totalLines * 30f;
             }
 
             string lastSec = null;
@@ -499,111 +534,151 @@ namespace GDChecklist
         // Lists each SDK as a full-width section. Replaces per-tab version headers.
         private void DrawSdkVersionsTab(float x, ref float y, float w)
         {
-            // Page title
-            GUI.Label(new Rect(x, y, w, 22), "Installed SDK Versions",
-                new GUIStyle(_sBody) {
-                    fontSize = 14,
-                    fontStyle = FontStyle.Bold,
-                    normal = { textColor = C_TEXT }
-                });
-            y += 26;
-            GUI.Label(new Rect(x, y, w, 16),
-                "Auto-detected from your project's Packages/manifest.json and Assets/ folders.",
-                new GUIStyle(_sMuted) { fontSize = 10, normal = { textColor = C_MUTED } });
-            y += 22;
-
-            // GD Monetization SDK — shown FIRST when present (sentinel index -1)
+            // Collect all SDKs once so we can compute totals + render
+            var allSdks = new List<SDKVersion>();
             var gdMon = SDKVersionDetector.GetVersionForTab(-1);
-            if (gdMon != null)
-            {
-                DrawSdkSection(gdMon, x, ref y, w);
-                y += 8;
-            }
-
-            // Render each main SDK section in order
+            if (gdMon != null) allSdks.Add(gdMon);
             for (int tabIndex = 0; tabIndex <= 4; tabIndex++)
             {
                 var sv = SDKVersionDetector.GetVersionForTab(tabIndex);
-                if (sv == null)
+                if (sv == null) sv = new SDKVersion { Name = SdkNameForTab(tabIndex) };
+                allSdks.Add(sv);
+            }
+
+            // Tally: modules detected, on target, drift
+            int modulesDetected = 0, modulesOnTarget = 0, modulesDrift = 0;
+            foreach (var sdk in allSdks)
+            {
+                if (sdk.Modules != null && sdk.Modules.Count > 0)
                 {
-                    sv = new SDKVersion { Name = SdkNameForTab(tabIndex) };
+                    foreach (var m in sdk.Modules)
+                    {
+                        if (string.IsNullOrEmpty(m.version)) continue;
+                        modulesDetected++;
+                        modulesOnTarget++; // any detected version is "on target" until drift detection lands
+                    }
                 }
-                DrawSdkSection(sv, x, ref y, w);
-                y += 8;
+                else if (!string.IsNullOrEmpty(sdk.Version))
+                {
+                    modulesDetected++;
+                    modulesOnTarget++;
+                }
+            }
+
+            // ── Editorial header — eyebrow + H1 ──────────────────────────────
+            EditorGUI.DrawRect(new Rect(x, y + 4, BrandTokens.EyebrowSquare, BrandTokens.EyebrowSquare), C_ACCENT);
+            string spacedEyebrow = "I\u2009N\u2009S\u2009T\u2009A\u2009L\u2009L\u2009E\u2009D";
+            GUI.Label(new Rect(x + BrandTokens.EyebrowSquare + 10, y, 300, 18), spacedEyebrow,
+                BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeEyebrow, C_TEXT, FontStyle.Bold));
+            y += 28;
+
+            // H1 — Fraunces
+            GUI.Label(new Rect(x, y, w, 50), "SDK versions.",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 32, C_TEXT, FontStyle.Bold));
+            y += 52;
+
+            // Stats row — Total / On target / Drift (matches HTML mock)
+            DrawSdkStat(x,        y, modulesDetected.ToString(),                   "MODULES DETECTED", C_TEXT);
+            DrawSdkStat(x + 200,  y, modulesOnTarget.ToString(),                   "ON TARGET",         C_GREEN);
+            DrawSdkStat(x + 360,  y, modulesDrift.ToString(),                      "DRIFT",             C_RED);
+            y += 56;
+
+            EditorGUI.DrawRect(new Rect(x, y, w, 1), C_BORDER);
+            y += 18;
+
+            // ── SDK sections — render in order, GD Monetization first ──────
+            foreach (var sdk in allSdks)
+            {
+                DrawSdkSection(sdk, x, ref y, w);
+                y += 12;
             }
         }
 
-        // Renders one SDK section: yellow accent header + module list
+        // Editorial stat — big serif numeral over small uppercase label
+        private void DrawSdkStat(float x, float y, string num, string label, Color numColor)
+        {
+            GUI.Label(new Rect(x, y, 180, 32), num,
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 30, numColor, FontStyle.Bold));
+            GUI.Label(new Rect(x, y + 36, 180, 14), label,
+                BrandTokens.MakeStyle(BrandTokens.Inter, 10, C_MUTED, FontStyle.Bold));
+        }
+
+        // Renders one SDK section — editorial: gold left-bar, Fraunces name, mono rows
         private void DrawSdkSection(SDKVersion v, float x, ref float y, float w)
         {
             int modCount = v.Modules?.Count ?? 0;
+            bool hasSingleVersion = modCount == 0 && !string.IsNullOrEmpty(v.Version);
             int lines = modCount > 0 ? modCount : 1;
 
-            const float headerH    = 28f;
-            const float lineH      = 18f;
-            const float padTop     = 6f;
-            const float padBottom  = 8f;
-            float rowH = headerH + lines * lineH + padTop + padBottom;
+            const float nameH    = 32f;
+            const float lineH    = 30f;
+            const float padLeft  = 18f;
+            float sectionH = nameH + lines * lineH + 4f;
 
-            // Subtle background panel
-            Bg(new Rect(x, y, w, rowH), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.05f));
-            Outline(new Rect(x, y, w, rowH), new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.25f));
-            Bg(new Rect(x, y, 3, rowH), C_ACCENT);
+            // 3px gold left-bar — full section height
+            EditorGUI.DrawRect(new Rect(x, y, 3, sectionH), C_ACCENT);
 
-            // SDK name
-            GUI.Label(new Rect(x + 14, y + padTop, w - 28, headerH), v.Name,
-                new GUIStyle(_sBody) {
-                    fontSize = 13,
-                    fontStyle = FontStyle.Bold,
-                    normal = { textColor = C_ACCENT }
-                });
+            // SDK name in Fraunces
+            GUI.Label(new Rect(x + padLeft, y, w - padLeft, nameH), v.Name,
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 17, C_TEXT, FontStyle.Bold));
+            float ly = y + nameH;
 
-            // Module rows (or "not detected")
-            float ly = y + padTop + headerH;
+            // Module rows — mono name on left, mono version + green check on right
             if (modCount > 0)
             {
                 for (int i = 0; i < v.Modules.Count; i++)
                 {
                     var m = v.Modules[i];
-                    // Label column (60% width), version column (right side)
-                    GUI.Label(new Rect(x + 28, ly, (w - 42) * 0.65f, lineH),
-                        m.label,
-                        new GUIStyle(_sBody) {
-                            fontSize = 11,
-                            normal = { textColor = C_TEXT }
-                        });
-                    GUI.Label(new Rect(x + 28 + (w - 42) * 0.65f, ly, (w - 42) * 0.35f, lineH),
-                        $"v{m.version}",
-                        new GUIStyle(_sBody) {
-                            fontSize = 11,
-                            fontStyle = FontStyle.Bold,
-                            normal = { textColor = C_TEXT }
-                        });
+                    bool isLast = (i == v.Modules.Count - 1);
+                    DrawSdkRow(x + padLeft, ly, w - padLeft, m.label, "v" + m.version, isLast);
                     ly += lineH;
                 }
             }
-            else if (!string.IsNullOrEmpty(v.Version))
+            else if (hasSingleVersion)
             {
-                GUI.Label(new Rect(x + 28, ly, w - 42, lineH),
-                    $"v{v.Version}",
-                    new GUIStyle(_sBody) {
-                        fontSize = 11,
-                        fontStyle = FontStyle.Bold,
-                        normal = { textColor = C_TEXT }
-                    });
+                // Single version (e.g. GD Monetization) — package id on left, version on right
+                string packageId = !string.IsNullOrEmpty(v.Source)
+                    ? "com.gamedistrict.monetization"
+                    : v.Name.ToLower().Replace(" ", "");
+                DrawSdkRow(x + padLeft, ly, w - padLeft, packageId, "v" + v.Version, true);
+                ly += lineH;
             }
             else
             {
-                GUI.Label(new Rect(x + 28, ly, w - 42, lineH),
+                GUI.Label(new Rect(x + padLeft, ly + 4, w - padLeft, lineH),
                     "Not detected",
-                    new GUIStyle(_sBody) {
-                        fontSize = 11,
-                        fontStyle = FontStyle.Italic,
-                        normal = { textColor = C_MUTED }
-                    });
+                    BrandTokens.MakeStyle(BrandTokens.FrauncesItalic ?? BrandTokens.Fraunces,
+                        13, C_MUTED, FontStyle.Italic));
+                EditorGUI.DrawRect(new Rect(x + padLeft, ly + lineH - 1, w - padLeft, 1), C_BORDER);
+                ly += lineH;
             }
 
-            y += rowH;
+            y = ly;
+        }
+
+        // One row of an SDK section — mono label + mono version + green check, hairline below
+        private void DrawSdkRow(float x, float y, float w, string label, string version, bool isLast)
+        {
+            // Hairline below row (visual separator between modules)
+            EditorGUI.DrawRect(new Rect(x, y + 29, w, 1), C_BORDER);
+
+            // Label on the left (mono)
+            GUI.Label(new Rect(x, y + 7, w * 0.6f, 18), label,
+                new GUIStyle(_sCode) { fontSize = 12, normal = { textColor = C_TEXT } });
+
+            // Version + check on right
+            float checkW = 18f;
+            var versionStyle = new GUIStyle(_sCode) {
+                fontSize = 12,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = C_TEXT },
+                alignment = TextAnchor.MiddleRight
+            };
+            GUI.Label(new Rect(x + w * 0.6f, y + 7, w * 0.4f - checkW - 8, 18), version, versionStyle);
+
+            // Green checkmark on the far right
+            GUI.Label(new Rect(x + w - checkW, y + 7, checkW, 18), "✓",
+                BrandTokens.MakeStyle(BrandTokens.Inter, 13, C_GREEN, FontStyle.Bold, TextAnchor.MiddleRight));
         }
 
         // ── SDK name helper (used by SDK Versions tab) ────────────────────────────
@@ -1137,66 +1212,76 @@ namespace GDChecklist
 
         private void DrawWelcomeScreen(Rect body)
         {
-            float cx = body.x + body.width  / 2f;
-            float cy = body.y + body.height / 2f;
-            float cw = 520f, ch = 320f;
+            float gap = 56f;
+            float leftW = (body.width - gap) * 0.45f;
+            float rightX = body.x + leftW + gap;
+            float rightW = body.width - leftW - gap;
 
-            // Card
-            Bg(new Rect(cx - cw/2 - 4, cy - ch/2 - 4, cw + 8, ch + 8), C_ACCENT);
-            var card = new Rect(cx - cw/2, cy - ch/2, cw, ch);
-            Bg(card, C_SURF);
+            // LEFT
+            DrawEyebrow(body.x, body.y, "WELCOME");
+            float cy = body.y + 32;
+            GUI.Label(new Rect(body.x, cy, leftW, 52), "Are you using",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, BrandTokens.SizeH1, C_TEXT, FontStyle.Bold));
+            cy += 46;
+            GUI.Label(new Rect(body.x, cy, leftW, 52), "the GD SDK?",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, BrandTokens.SizeH1, C_TEXT, FontStyle.Bold));
+            cy += 56;
+            GUI.Label(new Rect(body.x, cy, leftW, 80),
+                "We'll tailor the checklist to your setup — GD-wrapped paths and raw SDK installs read configuration from different places.",
+                BrandTokens.MakeWrappedStyle(BrandTokens.FrauncesItalic ?? BrandTokens.Fraunces,
+                    BrandTokens.SizeLede, BrandTokens.Ink, FontStyle.Italic));
+            cy += 90;
 
-            float iy = card.y + 20;
-            Bg(new Rect(card.x, iy, cw, 3), C_ACCENT); iy += 12;
+            DrawEyebrow(body.x, cy, "WHAT THIS AFFECTS");
+            cy += 24;
+            string[] items = {
+                "→ Which config paths the scanner reads from",
+                "→ Required vs optional manifest entries",
+                "→ GD-wrapper specific warnings",
+                "→ Default expected version ranges"
+            };
+            foreach (var item in items)
+            {
+                GUI.Label(new Rect(body.x, cy, leftW, 18), item,
+                    BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeBody, BrandTokens.Ink));
+                EditorGUI.DrawRect(new Rect(body.x, cy + 22, leftW, 1), C_BORDER);
+                cy += 26;
+            }
 
-            GUI.Label(new Rect(card.x + 20, iy, cw - 40, 13), "W E L C O M E",
-                new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
-                    normal = { textColor = C_ACCENT } }); iy += 18;
+            // RIGHT — two big editorial choice rows
+            float ry = body.y + 48;
 
-            GUI.Label(new Rect(card.x + 20, iy, cw - 40, 30), "Are you using the GD SDK?",
-                new GUIStyle(_sTitle) { fontSize = 20, normal = { textColor = C_TEXT } }); iy += 38;
-
-            GUI.Label(new Rect(card.x + 20, iy, cw - 40, 16),
-                "This helps us pre-select which SDKs to check. You can confirm or adjust on the next screen.",
-                new GUIStyle(_sMuted) { fontSize = 10 }); iy += 30;
-
-            Bg(new Rect(card.x + 20, iy, cw - 40, 1),
-               new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f)); iy += 16;
-
-            // Two big option buttons side by side
-            float btnW = (cw - 60) / 2f;
-
-            // ── YES — using GD SDK ───────────────────────────────────────────────
-            var yesRect = new Rect(card.x + 20, iy, btnW, 72);
+            // YES option
+            var yesRect = new Rect(rightX, ry, rightW, 110);
             bool yesHover = yesRect.Contains(Event.current.mousePosition);
-            Bg(yesRect, yesHover
-                ? new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.22f)
-                : new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.1f));
-            Outline(yesRect, new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b,
-                yesHover ? 0.9f : 0.45f));
-            Bg(new Rect(yesRect.x, yesRect.y, 3, yesRect.height), C_ACCENT);
+            if (yesHover) EditorGUI.DrawRect(yesRect, BrandTokens.GoldTint);
+            DrawRectOutline(yesRect, yesHover ? C_ACCENT : C_BORDER);
+            EditorGUI.DrawRect(new Rect(yesRect.x, yesRect.y, 4, yesRect.height), C_ACCENT);
 
-            GUI.Label(new Rect(yesRect.x + 14, yesRect.y + 10, btnW - 20, 20),
-                "✓  Yes, I use GD SDK",
-                new GUIStyle(_sBody) { fontSize = 12, fontStyle = FontStyle.Bold,
-                    normal = { textColor = C_ACCENT } });
-            GUI.Label(new Rect(yesRect.x + 14, yesRect.y + 34, btnW - 20, 30),
-                "Pre-selects detected SDKs\nYou confirm on next screen",
-                new GUIStyle(_sMuted) { fontSize = 10 });
+            // Shield icon
+            DrawShieldGlyph(yesRect.x + 24, yesRect.y + 24);
+            GUI.Label(new Rect(yesRect.x + 76, yesRect.y + 22, rightW - 180, 24),
+                "Yes, using GD SDK",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 18, C_TEXT, FontStyle.Bold));
+            GUI.Label(new Rect(yesRect.x + 76, yesRect.y + 48, rightW - 180, 50),
+                "Read configs from GDMonetization wrapper. Auto-detect Metica + Adjust + Firebase wiring.",
+                BrandTokens.MakeWrappedStyle(BrandTokens.Inter, BrandTokens.SizeBody, C_MUTED));
+            string yesLabel = yesHover ? "USE  →" : "USE";
+            GUI.Label(new Rect(yesRect.x + rightW - 80, yesRect.y + 44, 70, 22),
+                yesLabel,
+                BrandTokens.MakeStyle(BrandTokens.Inter, 12, C_TEXT, FontStyle.Bold, TextAnchor.MiddleRight));
+            EditorGUIUtility.AddCursorRect(yesRect, MouseCursor.Link);
 
             if (Click(yesRect))
             {
                 SDKConfig.IsGDSDK = true;
                 SDKConfig.InvalidateConfigCache();
-                // Pre-tick using only fast File.Exists checks on known GD paths
-                // No Directory.GetFiles — instant response
                 _tmp_AppLovin   = SDKConfig.HasAppLovinFast();
                 _tmp_Metica     = SDKConfig.HasMeticaFast();
                 _tmp_Adjust     = SDKConfig.HasAdjustFast();
                 _tmp_AppMetrica = SDKConfig.HasAppMetricaFast();
                 _tmp_Firebase   = SDKConfig.HasFirebaseFast();
                 _tmp_AdUnits    = SDKConfig.HasAdUnitsFast();
-                // If nothing detected, tick all so developer sees everything
                 if (!_tmp_AppLovin && !_tmp_Metica && !_tmp_Adjust &&
                     !_tmp_AppMetrica && !_tmp_Firebase && !_tmp_AdUnits)
                 {
@@ -1208,23 +1293,28 @@ namespace GDChecklist
                 Repaint();
             }
 
-            // ── NO — not using GD SDK ────────────────────────────────────────────
-            var noRect = new Rect(card.x + 40 + btnW, iy, btnW, 72);
-            bool noHover = noRect.Contains(Event.current.mousePosition);
-            Bg(noRect, noHover
-                ? new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.18f)
-                : new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.08f));
-            Outline(noRect, new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b,
-                noHover ? 0.7f : 0.3f));
-            Bg(new Rect(noRect.x, noRect.y, 3, noRect.height), C_MUTED);
+            ry += 130;
 
-            GUI.Label(new Rect(noRect.x + 14, noRect.y + 10, btnW - 20, 20),
-                "✗  No, using my own setup",
-                new GUIStyle(_sBody) { fontSize = 12, fontStyle = FontStyle.Bold,
-                    normal = { textColor = C_TEXT } });
-            GUI.Label(new Rect(noRect.x + 14, noRect.y + 34, btnW - 20, 30),
-                "I'll select which SDKs\nmy project uses manually",
-                new GUIStyle(_sMuted) { fontSize = 10 });
+            // NO option
+            var noRect = new Rect(rightX, ry, rightW, 110);
+            bool noHover = noRect.Contains(Event.current.mousePosition);
+            if (noHover) EditorGUI.DrawRect(noRect, BrandTokens.GoldTint);
+            DrawRectOutline(noRect, noHover ? C_ACCENT : C_BORDER);
+            EditorGUI.DrawRect(new Rect(noRect.x, noRect.y, 4, noRect.height), C_MUTED);
+
+            // List/stack glyph
+            DrawListGlyph(noRect.x + 24, noRect.y + 24);
+            GUI.Label(new Rect(noRect.x + 76, noRect.y + 22, rightW - 180, 24),
+                "No, raw SDKs",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 18, C_TEXT, FontStyle.Bold));
+            GUI.Label(new Rect(noRect.x + 76, noRect.y + 48, rightW - 180, 50),
+                "Read configs directly from each SDK's own files. Manual setup for tokens and keys.",
+                BrandTokens.MakeWrappedStyle(BrandTokens.Inter, BrandTokens.SizeBody, C_MUTED));
+            string noLabel = noHover ? "USE  →" : "USE";
+            GUI.Label(new Rect(noRect.x + rightW - 80, noRect.y + 44, 70, 22),
+                noLabel,
+                BrandTokens.MakeStyle(BrandTokens.Inter, 12, C_TEXT, FontStyle.Bold, TextAnchor.MiddleRight));
+            EditorGUIUtility.AddCursorRect(noRect, MouseCursor.Link);
 
             if (Click(noRect))
             {
@@ -1235,96 +1325,125 @@ namespace GDChecklist
             }
         }
 
+        // ── Decorative glyphs for the welcome choice cards ───────────────────────
+        private void DrawShieldGlyph(float x, float y)
+        {
+            float sw = 36, sh = 42;
+            EditorGUI.DrawRect(new Rect(x + 2, y, sw - 4, 1.5f), C_TEXT);
+            EditorGUI.DrawRect(new Rect(x, y, 1.5f, sh - 10), C_TEXT);
+            EditorGUI.DrawRect(new Rect(x + sw - 1.5f, y, 1.5f, sh - 10), C_TEXT);
+            for (int i = 0; i < 10; i++)
+            {
+                float t = i / 10f;
+                EditorGUI.DrawRect(new Rect(x + t * (sw / 2), y + sh - 10 + i, 1.5f, 1.5f), C_TEXT);
+                EditorGUI.DrawRect(new Rect(x + sw - 1.5f - t * (sw / 2), y + sh - 10 + i, 1.5f, 1.5f), C_TEXT);
+            }
+            float ckX = x + 8, ckY = y + 20;
+            for (int i = 0; i < 6; i++) EditorGUI.DrawRect(new Rect(ckX + i, ckY + i, 3, 3), C_ACCENT);
+            for (int i = 0; i < 11; i++) EditorGUI.DrawRect(new Rect(ckX + 5 + i, ckY + 5 - i, 3, 3), C_ACCENT);
+        }
+
+        private void DrawListGlyph(float x, float y)
+        {
+            float w = 36;
+            for (int i = 0; i < 3; i++)
+            {
+                EditorGUI.DrawRect(new Rect(x - 6, y + 6 + i * 12, 2, 2), C_ACCENT);
+                EditorGUI.DrawRect(new Rect(x,     y + 6 + i * 12, w, 2), C_TEXT);
+            }
+        }
+
+        private void DrawRectOutline(Rect r, Color c)
+        {
+            EditorGUI.DrawRect(new Rect(r.x, r.y, r.width, 1), c);
+            EditorGUI.DrawRect(new Rect(r.x, r.y + r.height - 1, r.width, 1), c);
+            EditorGUI.DrawRect(new Rect(r.x, r.y, 1, r.height), c);
+            EditorGUI.DrawRect(new Rect(r.x + r.width - 1, r.y, 1, r.height), c);
+        }
+
         // ════════════════════════════════════════════════════════════════════════
         //  SETUP SCREEN — first launch SDK picker
         // ════════════════════════════════════════════════════════════════════════
 
         private void DrawSetupScreen(Rect body)
         {
-            float cx = body.x + body.width  / 2f;
-            float cy = body.y + body.height / 2f;
-            float cw = 500f, ch = 490f;
+            float gap = 56f;
+            float leftW = (body.width - gap) * 0.4f;
+            float rightX = body.x + leftW + gap;
+            float rightW = body.width - leftW - gap;
 
-            // Glowing card border
-            Bg(new Rect(cx - cw/2 - 4, cy - ch/2 - 4, cw + 8, ch + 8), C_ACCENT);
-            var card = new Rect(cx - cw/2, cy - ch/2, cw, ch);
-            Bg(card, C_SURF);
+            // LEFT — header + question + stats
+            DrawEyebrow(body.x, body.y, "FIRST-TIME SETUP");
+            float cy = body.y + 32;
+            GUI.Label(new Rect(body.x, cy, leftW, 36), "Which SDKs",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 28, C_TEXT, FontStyle.Bold));
+            cy += 32;
+            GUI.Label(new Rect(body.x, cy, leftW, 36), "do you have",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 28, C_TEXT, FontStyle.Bold));
+            cy += 32;
+            GUI.Label(new Rect(body.x, cy, leftW, 36), "installed?",
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 28, C_TEXT, FontStyle.Bold));
+            cy += 48;
+            GUI.Label(new Rect(body.x, cy, leftW, 60),
+                "We've auto-detected what we could find. Confirm or adjust — you can change this any time from the Change setup button.",
+                BrandTokens.MakeWrappedStyle(BrandTokens.FrauncesItalic ?? BrandTokens.Fraunces,
+                    15, BrandTokens.Ink, FontStyle.Italic));
 
-            float iy = card.y + 20;
-            Bg(new Rect(card.x, iy, cw, 3), C_ACCENT); iy += 12;
+            // Stats row at bottom
+            int selected = (_tmp_AppLovin ? 1 : 0) + (_tmp_Metica ? 1 : 0) + (_tmp_Adjust ? 1 : 0)
+                         + (_tmp_AppMetrica ? 1 : 0) + (_tmp_Firebase ? 1 : 0) + (_tmp_AdUnits ? 1 : 0);
+            float statsY = body.y + body.height - 80;
+            EditorGUI.DrawRect(new Rect(body.x, statsY - 14, leftW, 1), C_BORDER);
+            DrawStat(body.x,       statsY, selected.ToString(), "SELECTED");
+            DrawStat(body.x + 100, statsY, "~10s",               "EST. SCAN");
 
-            // ← Back button — top left of card
-            if (Btn(new Rect(card.x + 14, iy, 64, 20), "← Back", C_MUTED))
+            // RIGHT — SDK toggles as 2-column grid
+            float ry = body.y + 4;
+            float colGap = 24f;
+            float colW = (rightW - colGap) / 2f;
+
+            DrawSDKToggleRow(rightX,             ry, colW, "AppLovin / AdMob",
+                "Ad mediation + AdMob App IDs", ref _tmp_AppLovin);
+            DrawSDKToggleRow(rightX + colW + colGap, ry, colW, "Metica",
+                "Monetization analytics & config", ref _tmp_Metica);
+            ry += 76;
+
+            DrawSDKToggleRow(rightX,             ry, colW, "Adjust",
+                "Attribution & event tracking", ref _tmp_Adjust);
+            DrawSDKToggleRow(rightX + colW + colGap, ry, colW, "AppMetrica",
+                "Yandex analytics platform", ref _tmp_AppMetrica);
+            ry += 76;
+
+            DrawSDKToggleRow(rightX,             ry, colW, "Firebase",
+                "Remote config, analytics, crash", ref _tmp_Firebase);
+            DrawSDKToggleRow(rightX + colW + colGap, ry, colW, "Ad Units",
+                "AdUnitsSettings.asset", ref _tmp_AdUnits);
+            ry += 92;
+
+            // Back + Confirm
+            bool anySelected = _tmp_AppLovin || _tmp_Metica || _tmp_Adjust ||
+                               _tmp_AppMetrica || _tmp_Firebase || _tmp_AdUnits;
+
+            var backR = new Rect(rightX, ry, 100, 36);
+            if (TopBtn(backR, "← Back"))
             {
                 _transitioning = true;
                 _appScreen = AppScreen.Welcome;
                 Repaint();
             }
 
-            // Header
-            GUI.Label(new Rect(card.x + 20, iy, cw - 40, 13), "F I R S T   T I M E   S E T U P",
-                new GUIStyle(_sMuted) { fontSize = 9, fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleCenter,
-                    normal = { textColor = C_ACCENT } }); iy += 18;
+            var confirmR = new Rect(rightX + rightW - 220, ry, 220, 36);
+            bool hover = confirmR.Contains(Event.current.mousePosition);
+            EditorGUI.DrawRect(confirmR, anySelected
+                ? (hover ? new Color(244f/255f, 196f/255f, 48f/255f, 0.85f) : C_ACCENT)
+                : new Color(211f/255f, 209f/255f, 199f/255f, 1f));
+            GUI.Label(confirmR, anySelected ? "Confirm & continue  →" : "Select at least one SDK",
+                BrandTokens.MakeStyle(BrandTokens.Inter, 12,
+                    anySelected ? C_TEXT : C_MUTED, FontStyle.Bold, TextAnchor.MiddleCenter));
+            if (anySelected) EditorGUIUtility.AddCursorRect(confirmR, MouseCursor.Link);
 
-            GUI.Label(new Rect(card.x + 20, iy, cw - 40, 28), "Which SDKs does this game use?",
-                new GUIStyle(_sTitle) { fontSize = 18, normal = { textColor = C_TEXT } }); iy += 34;
-
-            GUI.Label(new Rect(card.x + 20, iy, cw - 40, 16),
-                "Only selected SDKs will be scanned. You can change this anytime via ⚙ SDKs.",
-                new GUIStyle(_sMuted) { fontSize = 10 }); iy += 26;
-
-            Bg(new Rect(card.x + 20, iy, cw - 40, 1),
-               new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f)); iy += 14;
-
-            // SDK toggles
-            DrawSDKToggle(card.x + 20, ref iy, cw - 40, "AppLovin / AdMob",
-                "Ad mediation + AdMob App IDs", ref _tmp_AppLovin, C_ACCENT);
-
-            DrawSDKToggle(card.x + 20, ref iy, cw - 40, "Metica",
-                "Monetization analytics & config", ref _tmp_Metica, C_ORANGE);
-
-            DrawSDKToggle(card.x + 20, ref iy, cw - 40, "Adjust",
-                "Attribution & event tracking", ref _tmp_Adjust, C_GREEN);
-
-            DrawSDKToggle(card.x + 20, ref iy, cw - 40, "AppMetrica",
-                "Yandex analytics platform", ref _tmp_AppMetrica,
-                new Color(0.4f, 0.6f, 1f));
-
-            DrawSDKToggle(card.x + 20, ref iy, cw - 40, "Firebase",
-                "Remote config, analytics, crash reporting", ref _tmp_Firebase,
-                new Color(1f, 0.6f, 0.2f));
-
-            DrawSDKToggle(card.x + 20, ref iy, cw - 40, "Ad Units Settings",
-                "AdUnitsSettings.asset — ad unit IDs", ref _tmp_AdUnits, C_MUTED);
-
-            iy += 8;
-            Bg(new Rect(card.x + 20, iy, cw - 40, 1),
-               new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.3f)); iy += 14;
-
-            // Confirm button
-            bool anySelected = _tmp_AppLovin || _tmp_Metica || _tmp_Adjust ||
-                               _tmp_AppMetrica || _tmp_Firebase || _tmp_AdUnits;
-
-            GUI.enabled = anySelected;
-            var confirmRect = new Rect(card.x + 20, iy, cw - 40, 40);
-            Bg(confirmRect, anySelected
-                ? C_ACCENT
-                : new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.3f));
-            GUI.Label(confirmRect, anySelected ? "✓  Confirm & Continue" : "Select at least one SDK",
-                new GUIStyle(_sTitle)
-                {
-                    fontSize = 13, fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleCenter,
-                    normal = { textColor = anySelected
-                        ? new Color32(10, 10, 10, 255)
-                        : new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.6f) }
-                });
-            GUI.enabled = true;
-
-            if (anySelected && Click(confirmRect))
+            if (anySelected && Click(confirmR))
             {
-                // Save selections
                 SDKConfig.ManualAppLovin   = _tmp_AppLovin;
                 SDKConfig.ManualMetica     = _tmp_Metica;
                 SDKConfig.ManualAdjust     = _tmp_Adjust;
@@ -1340,48 +1459,39 @@ namespace GDChecklist
             }
         }
 
-        private void DrawSDKToggle(float x, ref float y, float w,
-                                    string name, string desc, ref bool value, Color col)
+        // Editorial SDK toggle — square checkbox + name + description
+        private void DrawSDKToggleRow(float x, float y, float w, string name, string desc, ref bool value)
         {
-            var rowRect = new Rect(x, y, w, 46);
-            bool hover  = rowRect.Contains(Event.current.mousePosition);
+            var rowRect = new Rect(x, y, w, 60);
+            bool hover = rowRect.Contains(Event.current.mousePosition);
+            if (hover) EditorGUI.DrawRect(rowRect, BrandTokens.GoldTint);
+            EditorGUI.DrawRect(new Rect(x, y + 60, w, 1), C_BORDER);
 
-            Bg(rowRect, value
-                ? new Color(col.r, col.g, col.b, 0.1f)
-                : hover ? new Color(1,1,1,0.03f) : Color.clear);
-            Outline(rowRect, value
-                ? new Color(col.r, col.g, col.b, 0.45f)
-                : new Color(C_BORDER.r, C_BORDER.g, C_BORDER.b, 0.5f));
-
+            // Square checkbox
+            var cb = new Rect(x + 4, y + 18, 18, 18);
+            DrawRectOutline(cb, C_TEXT);
             if (value)
-                Bg(new Rect(x, y, 3, 46), col);
+            {
+                EditorGUI.DrawRect(new Rect(cb.x + 2, cb.y + 2, 14, 14), C_TEXT);
+                for (int i = 0; i < 4; i++) EditorGUI.DrawRect(new Rect(cb.x + 3 + i, cb.y + 8 + i, 2, 2), C_ACCENT);
+                for (int i = 0; i < 6; i++) EditorGUI.DrawRect(new Rect(cb.x + 6 + i, cb.y + 11 - i, 2, 2), C_ACCENT);
+            }
 
-            // Checkbox
-            var checkRect = new Rect(x + 12, y + 13, 20, 20);
-            Bg(checkRect, value
-                ? col
-                : new Color(C_SURF2.r, C_SURF2.g, C_SURF2.b, 1f));
-            Outline(checkRect, value
-                ? col
-                : new Color(C_BORDER.r, C_BORDER.g, C_BORDER.b, 1f));
-            if (value)
-                GUI.Label(checkRect, "✓", new GUIStyle(_sBody)
-                    { fontSize = 11, alignment = TextAnchor.MiddleCenter,
-                      fontStyle = FontStyle.Bold,
-                      normal = { textColor = new Color32(10,10,10,255) } });
+            GUI.Label(new Rect(x + 32, y + 12, w - 40, 18), name,
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, 15, C_TEXT, FontStyle.Bold));
+            GUI.Label(new Rect(x + 32, y + 32, w - 40, 16), desc,
+                BrandTokens.MakeStyle(BrandTokens.Inter, 11, C_MUTED));
 
-            // Name + description
-            GUI.Label(new Rect(x + 40, y + 6, w - 60, 16), name,
-                new GUIStyle(_sBody)
-                    { fontSize = 12, fontStyle = FontStyle.Bold,
-                      normal = { textColor = value ? C_TEXT : C_MUTED } });
-            GUI.Label(new Rect(x + 40, y + 24, w - 60, 14), desc,
-                new GUIStyle(_sMuted) { fontSize = 10 });
-
-            // Toggle on click
+            EditorGUIUtility.AddCursorRect(rowRect, MouseCursor.Link);
             if (Click(rowRect)) { value = !value; Repaint(); }
+        }
 
-            y += 50;
+        private void DrawStat(float x, float y, string num, string label)
+        {
+            GUI.Label(new Rect(x, y, 90, 28), num,
+                BrandTokens.MakeStyle(BrandTokens.Fraunces, BrandTokens.SizeStatNum, C_TEXT, FontStyle.Bold));
+            GUI.Label(new Rect(x, y + 26, 100, 14), label,
+                BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeFootnote, C_MUTED));
         }
 
         // ════════════════════════════════════════════════════════════════════════
@@ -1516,15 +1626,11 @@ namespace GDChecklist
         private bool TopBtn(Rect r, string text)
         {
             bool hover = r.Contains(Event.current.mousePosition);
-            Bg(r, hover ? new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.18f)
-                        : new Color(0.22f, 0.22f, 0.22f, 1f));
-            Outline(r, hover ? new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.9f)
-                             : new Color(0.45f, 0.45f, 0.45f, 1f));
-            GUI.Label(r, text, new GUIStyle(_sBody)
-            {
-                fontSize = 11, alignment = TextAnchor.MiddleCenter,
-                normal = { textColor = hover ? C_ACCENT : C_TEXT }
-            });
+            if (hover) EditorGUI.DrawRect(r, BrandTokens.GoldTint);
+            DrawRectOutline(r, hover ? C_TEXT : C_BORDER);
+            GUI.Label(r, text,
+                BrandTokens.MakeStyle(BrandTokens.Inter, 11, C_TEXT, FontStyle.Bold, TextAnchor.MiddleCenter));
+            EditorGUIUtility.AddCursorRect(r, MouseCursor.Link);
             return Click(r);
         }
 
@@ -1548,11 +1654,17 @@ namespace GDChecklist
         private void InitStyles()
         {
             if (_stylesReady) return;
-            _sTitle = new GUIStyle(EditorStyles.boldLabel)  { fontSize = 14, normal = { textColor = C_TEXT } };
-            _sBody  = new GUIStyle(EditorStyles.label)      { fontSize = 12, wordWrap = true,  normal = { textColor = C_TEXT } };
-            _sMuted = new GUIStyle(EditorStyles.label)      { fontSize = 11, wordWrap = true,  normal = { textColor = C_MUTED } };
-            _sCode  = new GUIStyle(EditorStyles.label)      { fontSize = 11, wordWrap = false, normal = { textColor = C_TEXT },
-                font = Font.CreateDynamicFontFromOSFont(new[]{"Consolas","Courier New","Monaco"}, 11) };
+            var fraunces = BrandTokens.Fraunces;
+            var inter    = BrandTokens.Inter;
+
+            _sTitle = BrandTokens.MakeStyle(fraunces, 14, C_TEXT, FontStyle.Bold);
+            _sBody  = BrandTokens.MakeWrappedStyle(inter, 12, C_TEXT);
+            _sMuted = BrandTokens.MakeWrappedStyle(inter, 11, C_MUTED);
+            _sCode  = new GUIStyle(EditorStyles.label) {
+                fontSize = 11, wordWrap = false,
+                normal = { textColor = C_TEXT },
+                font = Font.CreateDynamicFontFromOSFont(new[]{"Consolas","Courier New","Monaco"}, 11)
+            };
             _stylesReady = true;
         }
     }

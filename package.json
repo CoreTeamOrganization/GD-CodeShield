@@ -1,6 +1,6 @@
 {
   "name": "com.gamedistrict.codeshield",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "displayName": "GD CodeShield",
   "description": "One package. Two tools. Ship cleaner games.\n\nSOLID Review — scans C# scripts for SRP, OCP, LSP, ISP violations and generates AI-powered fixes via Claude Code CLI. Includes Word Doc export.\n\nGD Checklist — full release checklist in one scan: SDK keys (AppLovin, Metica, Adjust, AppMetrica, Firebase, Ad Units), Pre-Release settings (app version, GraphicsAPI, Adjust environment, AppLovin flags, AppMetrica auto-collection), Build config (symbols, LZ4HC), and 20 manual device verification items with confirm buttons.\n\nOpen via Tools > GD CodeShield.\n\n⚠️ AI-Powered: This tool uses AI to generate code suggestions. Results may contain errors — always review before applying.",
   "unity": "2021.3",

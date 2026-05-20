@@ -1,176 +1,142 @@
 // Editor/Hub/ContactSupportWindow.cs
-// Standalone Contact Support window — opens as its own OS-level EditorWindow.
+// Standalone Contact Support window — editorial redesign (v1.3.0)
+// Preserved behaviour: POSTs to Apps Script webhook, ESC to cancel, 1000-char limit.
 
 using UnityEngine;
 using UnityEditor;
 using UnityEngine.Networking;
+using GDCodeShield.Brand;
 
 namespace GDCodeShield
 {
     public class ContactSupportWindow : EditorWindow
     {
-        // ── Palette ───────────────────────────────────────────────────────────
-        private static readonly Color C_BG     = new Color32(12,  12,  12,  255);
-        private static readonly Color C_SURF   = new Color32(22,  22,  22,  255);
-        private static readonly Color C_BORDER = new Color32(55,  55,  55,  255);
-        private static readonly Color C_ACCENT = new Color32(255, 211, 0,   255);
-        private static readonly Color C_TEXT   = new Color32(240, 240, 240, 255);
-        private static readonly Color C_MUTED  = new Color32(140, 140, 140, 255);
-        private static readonly Color C_GREEN  = new Color32(80,  200, 100, 255);
-        private static readonly Color C_RED    = new Color32(220,  70,  70, 255);
-
         // ── State ─────────────────────────────────────────────────────────────
         private string _subject = "";
         private string _body    = "";
         private string _status  = "";
         private bool   _sending = false;
 
-        private const string SUPPORT_EMAIL = "ghulammohyuddin@gamedistrict.co";
-        private const int    MAX_CHARS     = 1000;
+        private const int MAX_CHARS = 1000;
+
+        // ── Cached editorial styles ───────────────────────────────────────────
+        private GUIStyle _sBrand, _sH1, _sLede, _sEyebrow, _sBody, _sMuted, _sFootnote, _sBtn;
+        private bool _stylesReady;
+        private static Texture2D _clearBg;
 
         // ── Open ──────────────────────────────────────────────────────────────
         public static void Open()
         {
             var w = GetWindow<ContactSupportWindow>(true, "Contact Support", true);
-            w.minSize = new Vector2(520, 480);
-            w.maxSize = new Vector2(520, 480);
+            w.minSize = new Vector2(560, 540);
+            w.maxSize = new Vector2(560, 540);
             w.ShowUtility(); // floating utility window — always on top, own input
+        }
+
+        private void EnsureStyles()
+        {
+            if (_stylesReady) return;
+            _stylesReady = true;
+
+            var fraunces = BrandTokens.Fraunces;
+            var italics  = BrandTokens.FrauncesItalic ?? fraunces;
+            var inter    = BrandTokens.Inter;
+
+            _sBrand    = BrandTokens.MakeStyle(fraunces, 14, BrandTokens.Navy, FontStyle.Bold);
+            _sH1       = BrandTokens.MakeStyle(fraunces, 30, BrandTokens.Navy, FontStyle.Bold);
+            _sLede     = BrandTokens.MakeWrappedStyle(italics, 15, BrandTokens.Ink, FontStyle.Italic);
+            _sEyebrow  = BrandTokens.MakeStyle(inter, BrandTokens.SizeEyebrow, BrandTokens.Navy, FontStyle.Bold);
+            _sBody     = BrandTokens.MakeStyle(inter, BrandTokens.SizeBody, BrandTokens.Ink);
+            _sMuted    = BrandTokens.MakeStyle(inter, BrandTokens.SizeBody, BrandTokens.WarmGray);
+            _sFootnote = BrandTokens.MakeStyle(inter, BrandTokens.SizeFootnote, BrandTokens.WarmGray);
+            _sBtn      = BrandTokens.MakeStyle(inter, BrandTokens.SizeBody, BrandTokens.Navy, FontStyle.Bold, TextAnchor.MiddleCenter);
+
+            if (_clearBg == null)
+            {
+                _clearBg = new Texture2D(1, 1);
+                _clearBg.SetPixel(0, 0, Color.clear);
+                _clearBg.Apply();
+                _clearBg.hideFlags = HideFlags.HideAndDontSave;
+            }
         }
 
         // ── OnGUI ─────────────────────────────────────────────────────────────
         private void OnGUI()
         {
-            // Background
-            EditorGUI.DrawRect(new Rect(0, 0, position.width, position.height), C_BG);
+            EnsureStyles();
+            float W = position.width, H = position.height;
 
-            float x = 24f;
-            float w = position.width - 48f;
-            float y = 20f;
+            // Cream page + gold left-bar
+            EditorGUI.DrawRect(new Rect(0, 0, W, H), BrandTokens.Cream);
+            EditorGUI.DrawRect(new Rect(0, 0, BrandTokens.GoldBarWidth, H), BrandTokens.Gold);
 
-            // Top accent bar
-            EditorGUI.DrawRect(new Rect(0, 0, position.width, 3), C_ACCENT);
+            float padL = BrandTokens.GoldBarWidth + 30;
+            float padR = 36;
+            float contentW = W - padL - padR;
 
-            // ── Title ─────────────────────────────────────────────────────────
-            GUI.Label(new Rect(x, y, w, 28),
-                "Contact Support",
-                new GUIStyle(EditorStyles.boldLabel)
-                {
-                    fontSize = 17,
-                    normal   = { textColor = C_TEXT }
-                });
-            y += 30;
+            // ── Eyebrow + title + lede ────────────────────────────────────────
+            float y = 32f;
+            DrawEyebrow(padL, y, "SUPPORT");
+            y += 28;
 
-            GUI.Label(new Rect(x, y, w, 16),
-                $"Send a message to the GD CodeShield team",
-                new GUIStyle(EditorStyles.label)
-                {
-                    fontSize = 9,
-                    normal   = { textColor = new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.65f) }
-                });
-            y += 26;
+            GUI.Label(new Rect(padL, y, contentW, 40), "Contact support.", _sH1);
+            y += 44;
 
-            // Divider
-            EditorGUI.DrawRect(new Rect(x, y, w, 1),
-                new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.25f));
-            y += 16;
+            GUI.Label(new Rect(padL, y, contentW, 40),
+                "Tell us what's broken, what's unclear, or what would help. We read every message.",
+                _sLede);
+            y += 50;
+
+            BrandTokens.HairlineH(padL, y, contentW, BrandTokens.Taupe);
+            y += 20;
 
             // ── Subject ───────────────────────────────────────────────────────
-            GUI.Label(new Rect(x, y, w, 14),
-                "SUBJECT",
-                new GUIStyle(EditorStyles.label)
-                {
-                    fontSize  = 8,
-                    fontStyle = FontStyle.Bold,
-                    normal    = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.85f) }
-                });
-            y += 16;
+            DrawEyebrow(padL, y, "SUBJECT");
+            y += 22;
 
-            EditorGUI.DrawRect(new Rect(x, y, w, 30), new Color(1, 1, 1, 0.05f));
-            EditorGUI.DrawRect(new Rect(x, y + 29, w, 1),
-                new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.45f));
+            var subjRect = new Rect(padL, y, contentW, 32);
+            DrawInputField(subjRect);
 
             GUI.SetNextControlName("Subject");
             _subject = EditorGUI.TextField(
-                new Rect(x + 4, y + 6, w - 8, 18),
+                new Rect(padL + 8, y + 6, contentW - 16, 22),
                 _subject,
-                new GUIStyle(EditorStyles.textField)
-                {
-                    fontSize = 11,
-                    normal   = { textColor = C_TEXT,
-                                 background = MakeTex(1, 1, Color.clear) },
-                    focused  = { textColor = C_TEXT,
-                                 background = MakeTex(1, 1, Color.clear) },
-                    active   = { textColor = C_TEXT,
-                                 background = MakeTex(1, 1, Color.clear) }
-                });
-            y += 40;
+                MakeTextStyle());
+            y += 44;
 
             // ── Message ───────────────────────────────────────────────────────
-            GUI.Label(new Rect(x, y, w, 14),
-                "MESSAGE",
-                new GUIStyle(EditorStyles.label)
-                {
-                    fontSize  = 8,
-                    fontStyle = FontStyle.Bold,
-                    normal    = { textColor = new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.85f) }
-                });
-            y += 16;
+            DrawEyebrow(padL, y, "MESSAGE");
+            y += 22;
 
             float bodyH = 220f;
-            EditorGUI.DrawRect(new Rect(x, y, w, bodyH), new Color(1, 1, 1, 0.05f));
-            EditorGUI.DrawRect(new Rect(x, y + bodyH - 1, w, 1),
-                new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.45f));
+            var bodyRect = new Rect(padL, y, contentW, bodyH);
+            DrawInputField(bodyRect);
 
             GUI.SetNextControlName("Body");
             string newBody = EditorGUI.TextArea(
-                new Rect(x + 4, y + 6, w - 8, bodyH - 26),
+                new Rect(padL + 8, y + 6, contentW - 16, bodyH - 24),
                 _body,
-                new GUIStyle(EditorStyles.textArea)
-                {
-                    fontSize = 11,
-                    wordWrap = true,
-                    normal   = { textColor = C_TEXT,
-                                 background = MakeTex(1, 1, Color.clear) },
-                    focused  = { textColor = C_TEXT,
-                                 background = MakeTex(1, 1, Color.clear) },
-                    active   = { textColor = C_TEXT,
-                                 background = MakeTex(1, 1, Color.clear) }
-                });
-            _body = newBody.Length > MAX_CHARS
-                ? newBody.Substring(0, MAX_CHARS)
-                : newBody;
+                MakeTextAreaStyle());
+            _body = newBody.Length > MAX_CHARS ? newBody.Substring(0, MAX_CHARS) : newBody;
 
-            // Character counter
-            int  chars    = _body.Length;
-            Color charCol = chars > 950 ? C_RED
-                          : chars > 800 ? new Color(1f, 0.65f, 0.15f)
-                          : new Color(C_MUTED.r, C_MUTED.g, C_MUTED.b, 0.5f);
-            GUI.Label(new Rect(x, y + bodyH - 18, w - 4, 14),
+            // Character counter — bottom-right inside the field
+            int chars = _body.Length;
+            Color charCol = chars > 950 ? BrandTokens.Overdue
+                          : chars > 800 ? BrandTokens.Gold
+                          : BrandTokens.WarmGray;
+            GUI.Label(new Rect(padL, y + bodyH - 18, contentW - 8, 14),
                 $"{chars} / {MAX_CHARS}",
-                new GUIStyle(EditorStyles.label)
-                {
-                    fontSize  = 8,
-                    alignment = TextAnchor.MiddleRight,
-                    normal    = { textColor = charCol }
-                });
-            y += bodyH + 14;
+                BrandTokens.MakeStyle(BrandTokens.Inter, 10, charCol, FontStyle.Normal, TextAnchor.MiddleRight));
+            y += bodyH + 16;
 
             // ── Status ────────────────────────────────────────────────────────
             if (!string.IsNullOrEmpty(_status))
             {
                 bool isErr = _status.StartsWith("✗");
-                EditorGUI.DrawRect(new Rect(x, y, w, 28),
-                    new Color(isErr ? C_RED.r : C_GREEN.r,
-                              isErr ? C_RED.g : C_GREEN.g,
-                              isErr ? C_RED.b : C_GREEN.b, 0.1f));
-                EditorGUI.DrawRect(new Rect(x, y, 3, 28),
-                    isErr ? C_RED : C_GREEN);
-                GUI.Label(new Rect(x + 10, y + 6, w - 14, 16), _status,
-                    new GUIStyle(EditorStyles.label)
-                    {
-                        fontSize = 10,
-                        normal   = { textColor = isErr ? C_RED : C_GREEN }
-                    });
+                Color barColor = isErr ? BrandTokens.Overdue : BrandTokens.Shipped;
+                EditorGUI.DrawRect(new Rect(padL, y, 3, 28), barColor);
+                GUI.Label(new Rect(padL + 12, y + 6, contentW - 16, 16), _status,
+                    BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeBody, barColor, FontStyle.Bold));
                 y += 36;
             }
 
@@ -179,25 +145,14 @@ namespace GDCodeShield
                 && !string.IsNullOrWhiteSpace(_subject)
                 && !string.IsNullOrWhiteSpace(_body);
 
-            // Cancel
-            var cancelBtn = new Rect(x, y, 90, 34);
+            // Cancel — outlined ghost button on left
+            var cancelBtn = new Rect(padL, y, 96, 36);
             bool ch = cancelBtn.Contains(Event.current.mousePosition);
-            EditorGUI.DrawRect(cancelBtn, new Color(1, 1, 1, ch ? 0.08f : 0.03f));
-            EditorGUI.DrawRect(new Rect(cancelBtn.x, cancelBtn.y, cancelBtn.width, 1),
-                new Color(C_BORDER.r, C_BORDER.g, C_BORDER.b, 0.6f));
-            EditorGUI.DrawRect(new Rect(cancelBtn.x, cancelBtn.yMax - 1, cancelBtn.width, 1),
-                new Color(C_BORDER.r, C_BORDER.g, C_BORDER.b, 0.6f));
-            EditorGUI.DrawRect(new Rect(cancelBtn.x, cancelBtn.y, 1, cancelBtn.height),
-                new Color(C_BORDER.r, C_BORDER.g, C_BORDER.b, 0.6f));
-            EditorGUI.DrawRect(new Rect(cancelBtn.xMax - 1, cancelBtn.y, 1, cancelBtn.height),
-                new Color(C_BORDER.r, C_BORDER.g, C_BORDER.b, 0.6f));
-            GUI.Label(cancelBtn, "Cancel",
-                new GUIStyle(EditorStyles.label)
-                {
-                    fontSize  = 11,
-                    alignment = TextAnchor.MiddleCenter,
-                    normal    = { textColor = ch ? C_TEXT : C_MUTED }
-                });
+            if (ch) EditorGUI.DrawRect(cancelBtn, BrandTokens.GoldTint);
+            DrawRectOutline(cancelBtn, ch ? BrandTokens.Navy : BrandTokens.Taupe);
+            GUI.Label(cancelBtn, "Cancel", _sBtn);
+            EditorGUIUtility.AddCursorRect(cancelBtn, MouseCursor.Link);
+
             if (Event.current.type == EventType.MouseDown
                 && cancelBtn.Contains(Event.current.mousePosition))
             {
@@ -206,22 +161,20 @@ namespace GDCodeShield
                 return;
             }
 
-            // Send
-            var sendBtn = new Rect(position.width - x - 120, y, 120, 34);
+            // Send — gold primary button on right
+            var sendBtn = new Rect(W - padR - 160, y, 160, 36);
             bool sh = sendBtn.Contains(Event.current.mousePosition);
-            EditorGUI.DrawRect(sendBtn, canSend
-                ? (sh ? new Color(1f, 0.88f, 0.05f) : C_ACCENT)
-                : new Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.18f));
+            Color sendBg = canSend
+                ? (sh ? new Color(244f/255f, 196f/255f, 48f/255f, 0.85f) : BrandTokens.Gold)
+                : BrandTokens.Taupe;
+            EditorGUI.DrawRect(sendBtn, sendBg);
             GUI.Label(sendBtn,
-                _sending ? "Sending…" : "✉  Send Message",
-                new GUIStyle(EditorStyles.boldLabel)
-                {
-                    fontSize  = 11,
-                    alignment = TextAnchor.MiddleCenter,
-                    normal    = { textColor = canSend
-                        ? new Color32(10, 10, 10, 255)
-                        : new Color(0.35f, 0.35f, 0.35f, 0.5f) }
-                });
+                _sending ? "Sending…" : "Send message  →",
+                BrandTokens.MakeStyle(BrandTokens.Inter, 12,
+                    canSend ? BrandTokens.Navy : BrandTokens.WarmGray,
+                    FontStyle.Bold, TextAnchor.MiddleCenter));
+            if (canSend) EditorGUIUtility.AddCursorRect(sendBtn, MouseCursor.Link);
+
             if (canSend
                 && Event.current.type == EventType.MouseDown
                 && sendBtn.Contains(Event.current.mousePosition))
@@ -239,23 +192,69 @@ namespace GDCodeShield
             }
         }
 
-        // ── Send ──────────────────────────────────────────────────────────────
-        // Sends directly via HTTP POST (form-encoded) to a Google Apps Script webhook.
-        // No email client required on the user's machine.
+        // ── Editorial primitives ──────────────────────────────────────────────
+        private void DrawEyebrow(float x, float y, string label)
+        {
+            EditorGUI.DrawRect(new Rect(x, y + 4, BrandTokens.EyebrowSquare, BrandTokens.EyebrowSquare), BrandTokens.Gold);
+            string spaced = "";
+            for (int i = 0; i < label.Length; i++)
+            {
+                spaced += label[i];
+                if (i < label.Length - 1) spaced += "\u2009";
+            }
+            GUI.Label(new Rect(x + BrandTokens.EyebrowSquare + 10, y, 400, 18), spaced, _sEyebrow);
+        }
 
-        // Google Apps Script code — update your existing deployment with this:
-        //
-        //   function doPost(e) {
-        //     var subject = e.parameter.subject || "(no subject)";
-        //     var body    = e.parameter.body    || "(no body)";
-        //     var meta    = e.parameter.meta    || "";
-        //     MailApp.sendEmail("ghulammohyuddin@gamedistrict.co",
-        //       "[GD CodeShield] " + subject,
-        //       body + "\n\n---\n" + meta);
-        //     return ContentService.createTextOutput("ok")
-        //       .setMimeType(ContentService.MimeType.TEXT);
-        //   }
-        //
+        private void DrawInputField(Rect r)
+        {
+            // Subtle off-cream fill so the field is visible against the page
+            EditorGUI.DrawRect(r, new Color(0.96f, 0.95f, 0.91f, 1f));
+            DrawRectOutline(r, BrandTokens.Taupe);
+            // Gold bottom-edge accent for focus signal
+            EditorGUI.DrawRect(new Rect(r.x, r.yMax - 1, r.width, 1), BrandTokens.Gold);
+        }
+
+        private void DrawRectOutline(Rect r, Color c)
+        {
+            EditorGUI.DrawRect(new Rect(r.x, r.y, r.width, 1), c);
+            EditorGUI.DrawRect(new Rect(r.x, r.y + r.height - 1, r.width, 1), c);
+            EditorGUI.DrawRect(new Rect(r.x, r.y, 1, r.height), c);
+            EditorGUI.DrawRect(new Rect(r.x + r.width - 1, r.y, 1, r.height), c);
+        }
+
+        // TextField/TextArea styles with transparent backgrounds so our cream fill shows through
+        private GUIStyle MakeTextStyle()
+        {
+            var s = new GUIStyle(EditorStyles.textField)
+            {
+                fontSize = 13,
+                normal   = { textColor = BrandTokens.Navy, background = _clearBg },
+                focused  = { textColor = BrandTokens.Navy, background = _clearBg },
+                active   = { textColor = BrandTokens.Navy, background = _clearBg },
+                hover    = { textColor = BrandTokens.Navy, background = _clearBg }
+            };
+            if (BrandTokens.Inter != null) s.font = BrandTokens.Inter;
+            return s;
+        }
+
+        private GUIStyle MakeTextAreaStyle()
+        {
+            var s = new GUIStyle(EditorStyles.textArea)
+            {
+                fontSize = 13,
+                wordWrap = true,
+                normal   = { textColor = BrandTokens.Navy, background = _clearBg },
+                focused  = { textColor = BrandTokens.Navy, background = _clearBg },
+                active   = { textColor = BrandTokens.Navy, background = _clearBg },
+                hover    = { textColor = BrandTokens.Navy, background = _clearBg }
+            };
+            if (BrandTokens.Inter != null) s.font = BrandTokens.Inter;
+            return s;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        //  SEND — preserved exactly from prior version
+        // ═══════════════════════════════════════════════════════════════════════
         private const string WEBHOOK_URL =
             "https://script.google.com/macros/s/AKfycbzn7mlBIZByoS39ICiYvA7RLvnCvE2uc9LQd-VnM6Ytprn5jOqYq0niTg9IjsIHRYCM/exec";
 
@@ -271,7 +270,6 @@ namespace GDCodeShield
                         + $"Project: {Application.productName} | "
                         + $"Platform: {Application.platform}";
 
-            // Google Apps Script requires form-encoded POST to avoid redirect issues
             string formData = $"subject={UnityWebRequest.EscapeURL(_subject)}"
                             + $"&body={UnityWebRequest.EscapeURL(_body)}"
                             + $"&meta={UnityWebRequest.EscapeURL(meta)}";
@@ -307,7 +305,6 @@ namespace GDCodeShield
             }
             else
             {
-                // Read the actual response — script returns "ok" on success or "error: ..." on failure
                 string response = _request.downloadHandler?.text?.Trim() ?? "";
                 long responseCode = _request.responseCode;
 
@@ -338,7 +335,6 @@ namespace GDCodeShield
                 }
                 else
                 {
-                    // Show whatever the script returned so we can debug
                     string preview = response.Length > 120
                         ? response.Substring(0, 120) + "…"
                         : response;
@@ -350,22 +346,6 @@ namespace GDCodeShield
             _request.Dispose();
             _request = null;
             Repaint();
-        }
-
-        private static string EscapeJson(string s)
-            => s.Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r")
-                .Replace("\t", "\\t");
-
-        // ── Utility ───────────────────────────────────────────────────────────
-        private static Texture2D MakeTex(int w, int h, Color c)
-        {
-            var t = new Texture2D(w, h);
-            var p = new Color[w * h];
-            for (int i = 0; i < p.Length; i++) p[i] = c;
-            t.SetPixels(p); t.Apply(); return t;
         }
     }
 }
