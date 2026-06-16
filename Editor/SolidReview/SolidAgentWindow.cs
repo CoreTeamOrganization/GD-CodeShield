@@ -683,7 +683,15 @@ namespace SolidAgent
                 BrandTokens.MakeStyle(BrandTokens.Inter, 10, barColor, FontStyle.Bold));
             y += 24;
 
-            // Download report button — sits right under OVERALL info
+            // Preview report — opens an in-editor visual summary (Memory-Profiler style)
+            var previewRect = new Rect(x, y, w, 36);
+            if (TextButton(previewRect, "⤢  Preview report", false))
+            {
+                if (_report != null) SolidReportPreviewWindow.Open(_report);
+            }
+            y += 42;
+
+            // Download report button — sits right under the preview button
             var dlRect = new Rect(x, y, w, 36);
             if (TextButton(dlRect, "↓  Download Word report", false))
             {
@@ -785,7 +793,7 @@ namespace SolidAgent
             var filtered = FilteredViolations();
             var byFile = filtered.GroupBy(v => v.Location.FilePath).Count();
             h += byFile * 26 + filtered.Count * 46;
-            h += 50 + 80;
+            h += 42 + 50 + 80; // preview button + download button + bottom padding
             return h;
         }
 

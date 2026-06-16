@@ -2,6 +2,9 @@
 All notable changes to GD CodeShield are documented here.
 
 ## [Unreleased]
+### Added
+- **Preview report** button on the SOLID Review results screen, next to Download Word report. Opens an in-editor visual summary (modelled on Unity's Memory Profiler Summary tab): overall score bar, per-principle scores, violation distribution by principle, severity breakdown, and top files by violation count — each with a stacked bar and a colour-coded legend. The preview also has a one-click Download Word report shortcut.
+
 ### Fixed
 - SOLID Review folder picker now scrolls through expanded subfolders. The scroll view height was computed from the top-level folder count only, so folders revealed by expanding a parent fell below the scrollable area and could not be reached.
 
