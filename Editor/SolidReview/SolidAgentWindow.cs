@@ -383,7 +383,13 @@ namespace SolidAgent
             var viewRect = new Rect(x + 6, y + 36, w - 12, h - 44);
             var folders = GetTopLevelAssetFolders();
 
-            float contentH = folders.Count * 26 + 20;
+            // Content height must include every *expanded* subfolder row, not just the
+            // top-level count — otherwise scrolling stops short of the revealed children.
+            // Each row is 24px tall (see DrawFolderRow), starting at ly = 6.
+            int visibleRows = 0;
+            foreach (var folder in folders)
+                visibleRows += CountVisibleFolderRows(folder);
+            float contentH = 6 + visibleRows * 24 + 12;
             _folderPickerScroll = GUI.BeginScrollView(viewRect, _folderPickerScroll,
                 new Rect(0, 0, viewRect.width - 14, contentH));
 
@@ -486,6 +492,27 @@ namespace SolidAgent
         {
             try { return Directory.GetDirectories(path).Length > 0; }
             catch { return false; }
+        }
+
+        // Counts visible rows for one folder subtree, mirroring DrawFolderRow's
+        // expansion + filtering so the scroll content height matches what's drawn.
+        private int CountVisibleFolderRows(string folderPath)
+        {
+            int count = 1; // the folder's own row
+            if (_expandedFolders.Contains(folderPath) && HasSubfolders(folderPath))
+            {
+                try
+                {
+                    foreach (var sub in Directory.GetDirectories(folderPath))
+                    {
+                        string sn = Path.GetFileName(sub);
+                        if (sn.StartsWith(".")) continue;
+                        count += CountVisibleFolderRows(sub.Replace('\\', '/'));
+                    }
+                }
+                catch { }
+            }
+            return count;
         }
 
         // ═══════════════════════════════════════════════════════════════════════

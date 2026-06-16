@@ -2,6 +2,8 @@
 All notable changes to GD CodeShield are documented here.
 
 ## [Unreleased]
+### Fixed
+- SOLID Review folder picker now scrolls through expanded subfolders. The scroll view height was computed from the top-level folder count only, so folders revealed by expanding a parent fell below the scrollable area and could not be reached.
 
 ## [1.3.0] - 2026-05-20
 ### Changed
