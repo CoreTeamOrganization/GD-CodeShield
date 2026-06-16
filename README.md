@@ -87,12 +87,16 @@ Each violation has a **🚀 Run in Tool** button that opens Claude Code CLI with
 
 > AI suggestions may contain errors — always review before applying. Billed to your Anthropic account.
 
-### Word Doc Export (Docx)
+### Reports — Word (.docx) & HTML (.html)
 
-- **Project Report** — full summary report across all scanned files with scores, principle ratings, and violation breakdown
-- **File Report** — per-file detailed report matching the GD SOLID Review format: Scores at a Glance table, per-principle problem breakdown, What to Fix table, and priority list — ready to share directly with a developer
+Both export modes are available from the results sidebar and the in-editor **Preview report** window:
 
-> Requires Node.js installed on the machine. The `docx` package is bundled inside the tool — no `npm install` needed.
+- **Project Report** — full summary across all scanned files: scores, principle ratings, and violation breakdown
+- **File Report** — per-file detail matching the GD SOLID Review format: Scores at a Glance, per-principle breakdown, What to Fix, and priority list — ready to share directly with a developer
+
+**Word (.docx)** requires the Node.js *runtime* installed on the machine. The `docx` package is bundled inside the tool — no `npm install` needed.
+
+**HTML (.html)** is generated entirely in C# — no Node.js, Word, or npm required. A self-contained, styled page that opens in any browser; use this when Word isn't available (and "Print → Save as PDF" from the browser for a PDF).
 
 ### Settings
 

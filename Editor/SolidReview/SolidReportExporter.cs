@@ -168,16 +168,32 @@ namespace SolidAgent
             Directory.CreateDirectory(libraryDocxDir);
 
             string npmPath = FindNpmExecutable(nodePath);
+
+            // On Windows npm is a .cmd batch wrapper — it cannot be launched directly
+            // with UseShellExecute=false (CreateProcess rejects batch files with
+            // "%1 is not a valid Win32 application"), so route it through cmd.exe /c.
+            // On macOS/Linux npm is a normal executable script and launches directly.
+            bool isWindows = Application.platform == RuntimePlatform.WindowsEditor;
             var psi = new ProcessStartInfo
             {
-                FileName               = npmPath,
-                Arguments              = "install docx --prefix .",
                 WorkingDirectory       = libraryDocxDir,
                 UseShellExecute        = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError  = true,
                 CreateNoWindow         = true,
             };
+            if (isWindows)
+            {
+                psi.FileName  = "cmd.exe";
+                // cmd /c strips the outermost quote pair, leaving "<npm path>" as the
+                // command and the rest as its arguments — handles spaces in the path.
+                psi.Arguments = $"/c \"\"{npmPath}\" install docx --prefix .\"";
+            }
+            else
+            {
+                psi.FileName  = npmPath;
+                psi.Arguments = "install docx --prefix .";
+            }
             // Inherit PATH so npm can find node
             string pathEnv = System.Environment.GetEnvironmentVariable("PATH") ?? "";
             psi.EnvironmentVariables["PATH"] = pathEnv + Path.PathSeparator +
@@ -200,11 +216,24 @@ namespace SolidAgent
         private static string FindNpmExecutable(string nodePath)
         {
             // npm lives in the same bin directory as node
-            string nodeDir = Path.GetDirectoryName(nodePath);
+            string nodeDir = Path.GetDirectoryName(nodePath) ?? "";
+
+            if (Application.platform == RuntimePlatform.WindowsEditor)
+            {
+                // On Windows npm ships as npm.cmd (a batch wrapper). The extensionless
+                // "npm" file in the same folder is a Unix shell script — launching it
+                // throws "%1 is not a valid Win32 application", so prefer .cmd / .exe.
+                foreach (var name in new[] { "npm.cmd", "npm.bat", "npm.exe" })
+                {
+                    string p = Path.Combine(nodeDir, name);
+                    if (File.Exists(p)) return p;
+                }
+                return "npm.cmd"; // last resort — resolved via PATH by cmd.exe
+            }
+
+            // macOS / Linux — npm is an executable shell script
             string npmInSameDir = Path.Combine(nodeDir, "npm");
             if (File.Exists(npmInSameDir)) return npmInSameDir;
-            string npmExe = npmInSameDir + ".cmd"; // Windows
-            if (File.Exists(npmExe)) return npmExe;
 
             // Fallback: common locations
             string[] candidates = {
@@ -340,6 +369,208 @@ namespace SolidAgent
 
             return RunNode("file", path, sb.ToString());
         }
+
+        // ════════════════════════════════════════════════════════════════════════
+        //  HTML EXPORT — pure C#, no Node.js / Word / npm required.
+        //  Self-contained .html (inline CSS) that opens in any browser. Useful for
+        //  anyone without Word installed, or where the Node/docx toolchain is missing.
+        // ════════════════════════════════════════════════════════════════════════
+
+        public static string ExportHtml(SolidReport report)
+        {
+            string ts   = report.GeneratedAt.ToString("yyyy-MM-dd_HH-mm");
+            string path = Path.Combine(OutputFolder(), $"SOLID_Report_{ts}.html");
+            string html = BuildHtmlDocument("SOLID Review — Project Report", report, report.FileResults);
+            File.WriteAllText(path, html, new UTF8Encoding(false));
+            return path;
+        }
+
+        public static string ExportFileHtml(FileAnalysisResult file, SolidReport report)
+        {
+            string name = Path.GetFileNameWithoutExtension(file.FileName);
+            string ts   = DateTime.Now.ToString("yyyy-MM-dd_HH-mm");
+            string path = Path.Combine(OutputFolder(), $"SOLID_{name}_{ts}.html");
+
+            var single = new List<FileAnalysisResult> { file };
+            var rep    = RatingEngine.GenerateReport(single, name);
+            string html = BuildHtmlDocument("SOLID Review — " + name, rep, single);
+            File.WriteAllText(path, html, new UTF8Encoding(false));
+            return path;
+        }
+
+        private static string BuildHtmlDocument(string heading, SolidReport report, List<FileAnalysisResult> files)
+        {
+            var all   = files.SelectMany(f => f.Violations).ToList();
+            int high  = all.Count(v => v.Severity == Severity.High);
+            int med   = all.Count(v => v.Severity == Severity.Medium);
+            int low   = all.Count(v => v.Severity == Severity.Low);
+            int total = all.Count;
+
+            var sb = new StringBuilder();
+            sb.Append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+            sb.Append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
+            sb.Append("<title>").Append(HtmlEscape(heading)).Append("</title><style>").Append(HtmlCss).Append("</style></head>");
+            sb.Append("<body><div class=\"bar\"></div><div class=\"wrap\">");
+
+            // Header
+            sb.Append("<header><div class=\"eyebrow\">GD CODESHIELD &middot; SOLID REVIEW</div>");
+            sb.Append("<h1>").Append(HtmlEscape(heading)).Append("</h1>");
+            sb.Append("<p class=\"sub\">").Append(HtmlEscape(report.ProjectName ?? "Unity Project"))
+              .Append(" &middot; generated ").Append(HtmlEscape(report.GeneratedAt.ToString("yyyy-MM-dd HH:mm")))
+              .Append("</p></header>");
+
+            // Summary cards
+            string sc = ScoreColor(report.OverallScore);
+            sb.Append("<div class=\"cards\">");
+            sb.Append("<div class=\"card\" style=\"border-left-color:").Append(sc).Append("\"><div class=\"n\" style=\"color:")
+              .Append(sc).Append("\">").Append(report.OverallScore.ToString("F1")).Append(" / 5</div><div class=\"l\">")
+              .Append(HtmlEscape(report.OverallLabel ?? "")).Append("</div></div>");
+            sb.Append("<div class=\"card\"><div class=\"n\">").Append(report.TotalFiles).Append("</div><div class=\"l\">Files scanned</div></div>");
+            sb.Append("<div class=\"card\"><div class=\"n\">").Append(total).Append("</div><div class=\"l\">Violations</div></div>");
+            sb.Append("</div>");
+
+            // Scores by principle
+            sb.Append("<h2>Scores by Principle</h2><ul class=\"legend\">");
+            if (report.Ratings != null)
+                foreach (var r in report.Ratings)
+                {
+                    sb.Append("<li><span class=\"sw\" style=\"background:").Append(PrincipleHex(r.Principle)).Append("\"></span>")
+                      .Append("<b style=\"color:#0E1A33;margin-right:8px\">").Append(r.Principle).Append("</b>")
+                      .Append("<span style=\"color:#6B6B66\">").Append(HtmlEscape(r.Reason ?? "")).Append("</span>")
+                      .Append("<span class=\"val\" style=\"color:").Append(ScoreColor(r.Score)).Append("\">")
+                      .Append(r.Score).Append("/5 &middot; ").Append(HtmlEscape(r.Label ?? "")).Append("</span></li>");
+                }
+            sb.Append("</ul>");
+
+            // Distribution by principle
+            AppendDistribution(sb, "Violation Distribution by Principle",
+                "How the total violations break down across SRP / OCP / LSP / ISP.",
+                (report.Ratings ?? new List<PrincipleRating>())
+                    .Select(r => (r.Principle.ToString(), r.Violations, PrincipleHex(r.Principle))).ToList());
+
+            // Severity
+            AppendDistribution(sb, "Severity Breakdown",
+                "Severity weighting of every violation found in the scan.",
+                new List<(string, int, string)>
+                {
+                    ("High severity",   high, "#C0392B"),
+                    ("Medium severity", med,  "#C79A20"),
+                    ("Low severity",    low,  "#85B7EB"),
+                });
+
+            // Violations grouped by file (worst first)
+            sb.Append("<h2>Violations</h2>");
+            if (total == 0)
+            {
+                sb.Append("<p class=\"desc\">No violations found — every scanned file is clean.</p>");
+            }
+            else
+            {
+                sb.Append("<div class=\"vlist\">");
+                foreach (var f in files.Where(f => f.Violations.Count > 0).OrderByDescending(f => f.Violations.Count))
+                {
+                    sb.Append("<div class=\"file\">").Append(HtmlEscape(f.FileName)).Append(" &mdash; ")
+                      .Append(f.Violations.Count).Append(" violation(s)</div>");
+                    foreach (var v in f.Violations)
+                    {
+                        string sev = v.Severity == Severity.High ? "#C0392B"
+                                   : v.Severity == Severity.Medium ? "#C79A20" : "#85B7EB";
+                        sb.Append("<div class=\"v\" style=\"border-left-color:").Append(sev).Append("\"><div class=\"vtop\">");
+                        sb.Append("<span class=\"pill\" style=\"background:rgba(107,107,102,.12);color:").Append(sev).Append("\">")
+                          .Append(v.Principle).Append(" &middot; ").Append(v.Severity).Append("</span>");
+                        int line = v.Location != null ? v.Location.StartLine : 0;
+                        sb.Append("<span class=\"ln\">line ").Append(line).Append("</span></div>");
+                        sb.Append("<div class=\"t\">").Append(HtmlEscape(v.Title)).Append("</div>");
+                        if (!string.IsNullOrEmpty(v.Description))
+                            sb.Append("<div class=\"d\">").Append(HtmlEscape(v.Description)).Append("</div>");
+                        if (!string.IsNullOrEmpty(v.Evidence))
+                            sb.Append("<div class=\"ev\">").Append(HtmlEscape(v.Evidence)).Append("</div>");
+                        sb.Append("</div>");
+                    }
+                }
+                sb.Append("</div>");
+            }
+
+            sb.Append("<footer>Generated by GD CodeShield &middot; SOLID Review</footer>");
+            sb.Append("</div></body></html>");
+            return sb.ToString();
+        }
+
+        private static void AppendDistribution(StringBuilder sb, string title, string desc,
+            List<(string label, int value, string color)> items)
+        {
+            int total = items.Sum(i => i.value);
+            sb.Append("<h2>").Append(HtmlEscape(title)).Append("</h2><p class=\"desc\">").Append(HtmlEscape(desc)).Append("</p>");
+            sb.Append("<div class=\"stack\">");
+            if (total > 0)
+                foreach (var it in items)
+                {
+                    if (it.value <= 0) continue;
+                    double pct = 100.0 * it.value / total;
+                    sb.Append("<span style=\"width:").Append(pct.ToString("F2")).Append("%;background:").Append(it.color).Append("\"></span>");
+                }
+            sb.Append("</div><ul class=\"legend\">");
+            foreach (var it in items)
+            {
+                int pct = total > 0 ? (int)System.Math.Round(100.0 * it.value / total) : 0;
+                sb.Append("<li><span class=\"sw\" style=\"background:").Append(it.color).Append("\"></span>")
+                  .Append(HtmlEscape(it.label)).Append("<span class=\"val\">").Append(it.value)
+                  .Append(" (").Append(pct).Append("%)</span></li>");
+            }
+            sb.Append("</ul>");
+        }
+
+        private static string ScoreColor(double s) => s >= 4 ? "#6FA76F" : s >= 3 ? "#C79A20" : "#C0392B";
+
+        private static string PrincipleHex(SolidPrinciple p)
+        {
+            switch (p)
+            {
+                case SolidPrinciple.SRP: return "#0E1A33";
+                case SolidPrinciple.OCP: return "#C79A20";
+                case SolidPrinciple.LSP: return "#85B7EB";
+                case SolidPrinciple.ISP: return "#6FA76F";
+                default:                 return "#6B6B66";
+            }
+        }
+
+        private static string HtmlEscape(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+        }
+
+        private const string HtmlCss =
+@"*{box-sizing:border-box;margin:0;padding:0}
+body{background:#EEEDE6;color:#3D3D3A;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
+.bar{position:fixed;left:0;top:0;bottom:0;width:6px;background:#F4C430}
+.wrap{max-width:920px;margin:0 auto;padding:0 44px 60px}
+header{padding:40px 0 18px;border-bottom:1px solid #D3D1C7;margin-bottom:24px}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:2px;color:#0E1A33}
+h1{font-family:Georgia,'Times New Roman',serif;font-size:34px;color:#0E1A33;margin:10px 0 6px}
+.sub{font-size:12px;color:#6B6B66}
+h2{font-family:Georgia,serif;font-size:20px;color:#0E1A33;margin:30px 0 4px}
+.desc{font-size:12px;color:#6B6B66;margin-bottom:10px}
+.cards{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0 6px}
+.card{flex:1 1 130px;border:1px solid #D3D1C7;border-left:4px solid #F4C430;padding:12px 14px;background:#F7F6F0}
+.card .n{font-family:Georgia,serif;font-size:26px;color:#0E1A33;font-weight:700}
+.card .l{font-size:10px;letter-spacing:1px;color:#6B6B66;text-transform:uppercase;margin-top:2px}
+.stack{display:flex;height:24px;width:100%;border:1px solid #D3D1C7;overflow:hidden;background:rgba(0,0,0,.05);margin:8px 0}
+.stack span{display:block;height:100%}
+.legend{list-style:none}
+.legend li{display:flex;align-items:center;padding:7px 0;border-bottom:1px solid #D3D1C7;font-size:13px}
+.legend .sw{width:11px;height:11px;margin-right:10px;flex:0 0 auto}
+.legend .val{margin-left:auto;font-weight:700;color:#0E1A33;padding-left:12px}
+.vlist{margin-top:8px}
+.file{font-family:Georgia,serif;font-style:italic;color:#6B6B66;font-size:13px;margin:20px 0 6px}
+.v{border:1px solid #D3D1C7;border-left:4px solid #C0392B;background:#F7F6F0;padding:10px 12px;margin-bottom:8px}
+.v .vtop{display:flex;gap:10px;align-items:center;margin-bottom:4px}
+.pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:2px}
+.ln{font-size:11px;color:#6B6B66}
+.v .t{font-weight:700;color:#0E1A33;font-size:13px}
+.v .d{font-size:12px;color:#3D3D3A;margin-top:2px}
+.v .ev{font-size:11px;color:#6B6B66;margin-top:4px;font-family:Menlo,Consolas,monospace}
+footer{margin-top:44px;padding-top:16px;border-top:1px solid #D3D1C7;font-size:10px;color:#6B6B66;letter-spacing:1px}";
 
         // ── Helpers ───────────────────────────────────────────────────────────────
         private static string SerialiseViolation(Violation v)

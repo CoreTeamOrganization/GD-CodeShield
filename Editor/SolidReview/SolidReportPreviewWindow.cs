@@ -85,15 +85,16 @@ namespace SolidAgent
 
             // ── Header ──────────────────────────────────────────────────────────
             DrawEyebrow(padL, 22, "SUMMARY");
-            GUI.Label(new Rect(padL, 44, W - padL - padR - 220, 44), "Report preview.", _sH1);
+            GUI.Label(new Rect(padL, 44, W - padL - padR - 330, 44), "Report preview.", _sH1);
             string sub = $"{(_report.ProjectName ?? "Unity Project")}  ·  generated {_report.GeneratedAt:yyyy-MM-dd HH:mm}";
             GUI.Label(new Rect(padL, 86, W - padL - padR, 16), sub,
                 BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeFootnote, BrandTokens.WarmGray));
 
-            // Download shortcut top-right
-            var dlR = new Rect(W - padR - 200, 40, 200, 30);
-            if (Btn(dlR, "↓  Download Word report"))
-                DownloadReport();
+            // Download shortcuts top-right — Word (.docx) + HTML (.html)
+            var wordR = new Rect(W - padR - 310, 40, 150, 30);
+            var htmlR = new Rect(W - padR - 150, 40, 150, 30);
+            if (Btn(wordR, "↓  Word (.docx)")) DownloadWord();
+            if (Btn(htmlR, "↓  HTML (.html)")) DownloadHtml();
 
             BrandTokens.HairlineH(padL, 108, W - padL - padR, BrandTokens.Taupe);
 
@@ -321,18 +322,22 @@ namespace SolidAgent
             return false;
         }
 
-        private void DownloadReport()
+        private void DownloadWord() => ExportAndOpen(() => SolidReportExporter.Export(_report), "Word");
+        private void DownloadHtml() => ExportAndOpen(() => SolidReportExporter.ExportHtml(_report), "HTML");
+
+        private void ExportAndOpen(System.Func<string> exporter, string kind)
         {
+            if (_report == null) return;
             try
             {
-                string path = SolidReportExporter.Export(_report);
+                string path = exporter();
                 if (!string.IsNullOrEmpty(path) && File.Exists(path))
                     System.Diagnostics.Process.Start(path);
             }
             catch (System.Exception ex)
             {
                 EditorUtility.DisplayDialog("Export failed",
-                    "Could not generate Word report.\n\n" + ex.Message, "OK");
+                    $"Could not generate {kind} report.\n\n" + ex.Message, "OK");
             }
         }
     }

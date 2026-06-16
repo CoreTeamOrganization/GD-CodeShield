@@ -691,25 +691,16 @@ namespace SolidAgent
             }
             y += 42;
 
-            // Download report button — sits right under the preview button
+            // Download report — Word (.docx) and HTML (.html). HTML needs no Word/Node
+            // to view, so it's the universal fallback.
             var dlRect = new Rect(x, y, w, 36);
-            if (TextButton(dlRect, "↓  Download Word report", false))
-            {
-                if (_report != null)
-                {
-                    try
-                    {
-                        string path = SolidReportExporter.Export(_report);
-                        if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                            System.Diagnostics.Process.Start(path);
-                    }
-                    catch (System.Exception ex)
-                    {
-                        EditorUtility.DisplayDialog("Export failed",
-                            "Could not generate Word report.\n\n" + ex.Message, "OK");
-                    }
-                }
-            }
+            if (TextButton(dlRect, "↓  Word report (.docx)", false))
+                ExportAndOpen(() => SolidReportExporter.Export(_report), "Word");
+            y += 42;
+
+            var htmlRect = new Rect(x, y, w, 36);
+            if (TextButton(htmlRect, "↓  HTML report (.html)", false))
+                ExportAndOpen(() => SolidReportExporter.ExportHtml(_report), "HTML");
             y += 50;
             BrandTokens.HairlineH(x, y, w, BrandTokens.Taupe);
             y += 16;
@@ -793,7 +784,7 @@ namespace SolidAgent
             var filtered = FilteredViolations();
             var byFile = filtered.GroupBy(v => v.Location.FilePath).Count();
             h += byFile * 26 + filtered.Count * 46;
-            h += 42 + 50 + 80; // preview button + download button + bottom padding
+            h += 42 + 42 + 50 + 80; // preview + Word + HTML buttons + bottom padding
             return h;
         }
 
@@ -999,25 +990,32 @@ namespace SolidAgent
                 }
             }
 
-            // Right: File Doc
+            // Right: per-file report — HTML (.html) + Word (.docx)
+            var fileResult = _results.FirstOrDefault(r => r.FilePath == v.Location.FilePath);
+
+            var fileHtmlR = new Rect(x + w - 268, y, 126, 32);
+            if (TextButton(fileHtmlR, "↓  File HTML", false) && fileResult != null && _report != null)
+                ExportAndOpen(() => SolidReportExporter.ExportFileHtml(fileResult, _report), "HTML");
+
             var fileR = new Rect(x + w - 130, y, 130, 32);
-            if (GoldButton(fileR, "↓  File doc"))
+            if (GoldButton(fileR, "↓  File doc") && fileResult != null && _report != null)
+                ExportAndOpen(() => SolidReportExporter.ExportFile(fileResult, _report), "Word");
+        }
+
+        // Runs an exporter, opens the produced file, and surfaces failures in a dialog.
+        private void ExportAndOpen(System.Func<string> exporter, string kind)
+        {
+            if (_report == null) return;
+            try
             {
-                var fileResult = _results.FirstOrDefault(r => r.FilePath == v.Location.FilePath);
-                if (fileResult != null && _report != null)
-                {
-                    try
-                    {
-                        string path = SolidReportExporter.ExportFile(fileResult, _report);
-                        if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                            System.Diagnostics.Process.Start(path);
-                    }
-                    catch (System.Exception ex)
-                    {
-                        EditorUtility.DisplayDialog("Export failed",
-                            "Could not generate file report.\n\n" + ex.Message, "OK");
-                    }
-                }
+                string path = exporter();
+                if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                    System.Diagnostics.Process.Start(path);
+            }
+            catch (System.Exception ex)
+            {
+                EditorUtility.DisplayDialog("Export failed",
+                    $"Could not generate {kind} report.\n\n" + ex.Message, "OK");
             }
         }
 

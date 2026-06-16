@@ -3,10 +3,12 @@ All notable changes to GD CodeShield are documented here.
 
 ## [Unreleased]
 ### Added
+- **HTML report export** for SOLID Review, alongside the Word (.docx) export — on the results sidebar, the Preview window header, and the per-violation actions (File HTML). The HTML report is a self-contained, styled `.html` generated entirely in C# (no Node.js, Word, or npm required) so anyone can open it in a browser. Covers the same content: overall score, per-principle scores, violation/severity distributions, and the full violation list grouped by file.
 - **Preview report** button on the SOLID Review results screen, next to Download Word report. Opens an in-editor visual summary (modelled on Unity's Memory Profiler Summary tab): overall score bar, per-principle scores, violation distribution by principle, severity breakdown, and top files by violation count — each with a stacked bar and a colour-coded legend. The preview also has a one-click Download Word report shortcut.
 
 ### Fixed
 - SOLID Review folder picker now scrolls through expanded subfolders. The scroll view height was computed from the top-level folder count only, so folders revealed by expanding a parent fell below the scrollable area and could not be reached.
+- Word report export no longer fails on Windows with "%1 is not a valid Win32 application." When the docx package has to be auto-installed, npm is now invoked correctly on Windows (via `npm.cmd` routed through `cmd.exe /c`) instead of the unrunnable extensionless `npm` shell script.
 
 ## [1.3.0] - 2026-05-20
 ### Changed
