@@ -76,8 +76,15 @@ namespace SolidAgent
 
     public class SolidAnalyzer
     {
-        private const int SRP_MAX_METHODS       = 10;
+        private const int SRP_MAX_METHODS       = 15; // non-lifecycle methods; size is a Low-severity note, not a violation
         private const int ISP_MAX_INTERFACE_MTH = 5;
+
+        private static readonly string[] UnityLifecycle =
+        {
+            "Awake","Start","Update","FixedUpdate","LateUpdate","OnEnable","OnDisable",
+            "OnDestroy","OnApplicationPause","OnApplicationFocus","OnApplicationQuit",
+            "OnValidate","Reset","OnGUI","OnDrawGizmos"
+        };
 
         // ── Scan folder ───────────────────────────────────────────────────────────
 
@@ -116,8 +123,11 @@ namespace SolidAgent
             {
                 CheckSRP(cls, filePath, result, ref idx);
                 CheckOCP(cls, filePath, result, ref idx);
-                CheckLSP(cls, filePath, result, ref idx);
-                CheckISP_Implementor(cls, filePath, result, ref idx);
+                // ISP runs first: when a fat-interface violation already covers a set of
+                // throwing methods, LSP skips those methods so one root cause isn't
+                // penalized under two principles.
+                var ispCovered = CheckISP_Implementor(cls, filePath, result, ref idx);
+                CheckLSP(cls, filePath, result, ref idx, ispCovered);
             }
 
             foreach (var iface in interfaces)
@@ -304,25 +314,85 @@ namespace SolidAgent
             // Skip orchestrator classes — they delegate intentionally after an SRP split
             if (IsDelegationClass(cls)) return;
 
-            var concerns = DetectConcerns(cls.Methods);
-            bool tooMany      = cls.Methods.Count > SRP_MAX_METHODS;
-            bool multiConcern = concerns.Count >= 3;
+            // Signal 1 — method-name concern groups. A group only counts if it has ≥2
+            // methods: one stray PlaySound() in a movement class is not a second job.
+            var concerns = DetectConcerns(cls.Methods)
+                .Where(g => g.Value.Count >= 2)
+                .ToDictionary(g => g.Key, g => g.Value);
 
-            if (!tooMany && !multiConcern) return;
+            // Signal 2 — which Unity API families the class body actually touches.
+            // Field types + API calls are a closer proxy for "reasons to change"
+            // than method names alone.
+            var clusters = DetectDependencyClusters(cls.Body);
+
+            // Size note: method count measures size, not responsibility. It never
+            // becomes a Medium/High violation on its own. Lifecycle methods excluded.
+            int nonLifecycle = cls.Methods.Count(m => !UnityLifecycle.Contains(m));
+
+            bool multiConcern = concerns.Count >= 2 && clusters.Count >= 2; // two independent signals agree
+            bool nameConcern  = concerns.Count >= 2;                        // names alone — lower confidence
+            bool tooMany      = nonLifecycle > SRP_MAX_METHODS;
+
+            if (!multiConcern && !nameConcern && !tooMany) return;
+
+            Severity sev; string title, desc, evidence;
+            if (multiConcern)
+            {
+                sev      = Severity.Medium;
+                title    = $"{cls.Name} has multiple responsibilities";
+                desc     = $"'{cls.Name}' groups methods around {concerns.Count} concerns and touches {clusters.Count} unrelated API families. Each class should have a single reason to change.";
+                evidence = "Concern groups: " + string.Join(", ", concerns.Select(c => $"{c.Key}({c.Value.Count})"))
+                         + " · APIs touched: " + string.Join(", ", clusters);
+            }
+            else if (nameConcern)
+            {
+                sev      = Severity.Low;
+                title    = $"{cls.Name} may mix concerns";
+                desc     = $"Method names in '{cls.Name}' suggest more than one concern. Review whether these belong in one class — this is a naming-based hint, not a definite violation.";
+                evidence = "Concern groups: " + string.Join(", ", concerns.Select(c => $"{c.Key}({c.Value.Count})"));
+            }
+            else
+            {
+                sev      = Severity.Low;
+                title    = $"{cls.Name} is large ({nonLifecycle} methods)";
+                desc     = $"'{cls.Name}' has {nonLifecycle} non-lifecycle methods. Size alone is not an SRP violation, but large classes are worth a look for hidden responsibilities.";
+                evidence = $"{nonLifecycle} methods (excluding Unity lifecycle)";
+            }
 
             result.Violations.Add(new Violation
             {
                 Id          = $"SRP-{idx++:D3}",
                 Principle   = SolidPrinciple.SRP,
-                Severity    = multiConcern ? Severity.High : Severity.Medium,
-                Title       = $"{cls.Name} has multiple responsibilities",
-                Description = $"'{cls.Name}' handles more than one concern. Each class should have a single reason to change.",
+                Severity    = sev,
+                Title       = title,
+                Description = desc,
                 Location    = new CodeLocation { FilePath = filePath, FileName = Path.GetFileName(filePath), ClassName = cls.Name, StartLine = cls.StartLine, EndLine = cls.EndLine },
                 OriginalCode = Trim(cls.Body, 400),
-                Evidence     = multiConcern
-                    ? "Concern groups: " + string.Join(", ", concerns.Select(c => $"{c.Key}({c.Value.Count})"))
-                    : $"{cls.Methods.Count} methods in one class"
+                Evidence     = evidence
             });
+        }
+
+        // API-family detection — which unrelated Unity/System subsystems a class touches.
+        // Used as an independent confirmation signal for SRP, so a keyword coincidence in
+        // method names can't produce a Medium violation on its own.
+        private static readonly (string Name, string Pattern)[] DependencySignals =
+        {
+            ("Audio",       @"\bAudioSource\b|\bAudioClip\b|\bPlayOneShot\b|\bAudioMixer\b"),
+            ("UI",          @"\bUnityEngine\.UI\b|\bCanvas\b|\bTextMeshPro\w*|\bTMP_\w+|\bButton\b|\bSlider\b"),
+            ("Persistence", @"\bPlayerPrefs\b|\bFile\.\w+|\bJsonUtility\b|\bStreamWriter\b|\bBinaryFormatter\b"),
+            ("Animation",   @"\bAnimator\b|\bSetTrigger\b|\bCrossFade\b"),
+            ("Physics",     @"\bRigidbody2?D?\b|\bAddForce\b|\bRaycast\b"),
+            ("Network",     @"\bUnityWebRequest\b|\bHttpClient\b|\bWebSocket\b"),
+            ("SceneFlow",   @"\bSceneManager\b|\bLoadScene\b"),
+        };
+
+        private List<string> DetectDependencyClusters(string body)
+        {
+            var hits = new List<string>();
+            foreach (var (name, pattern) in DependencySignals)
+                if (Regex.IsMatch(body, pattern))
+                    hits.Add(name);
+            return hits;
         }
 
         private Dictionary<string, List<string>> DetectConcerns(List<string> methods)
@@ -331,7 +401,7 @@ namespace SolidAgent
             {
                 ["Movement"]  = new[] { "Move","Jump","Walk","Run","Teleport","Dash" },
                 ["Combat"]    = new[] { "Attack","Hit","Shoot","Fire","Damage","Kill","Die" },
-                ["Audio"]     = new[] { "Play","Sound","Music","Audio","Volume","Mute" },
+                ["Audio"]     = new[] { "PlaySound","PlayMusic","PlayClip","PlayAudio","PlaySfx","Sound","Music","Audio","Volume","Mute" },
                 ["UI"]        = new[] { "Show","Hide","Display","Render","Draw","UpdateUI","UpdateScore","UpdateHUD" },
                 ["Scoring"]   = new[] { "Score","Points","AddScore","ResetScore" },
                 ["Saving"]    = new[] { "Save","Load","Persist","Serialize" },
@@ -365,8 +435,10 @@ namespace SolidAgent
                 string varName = m.Groups[1].Value.ToLower();
                 if (!IsTypeVar(varName)) continue;
 
-                // Count cases
-                int cases = Regex.Matches(cls.Body.Substring(m.Index), @"\bcase\b").Count;
+                // Count cases inside THIS switch's block only — counting to the end of
+                // the class would let a later switch inflate this one's case count.
+                string switchBlock = ExtractBlock(cls.Body, m.Index);
+                int cases = Regex.Matches(switchBlock, @"\bcase\b").Count;
                 if (cases < 3) continue;
 
                 int line = cls.StartLine + LineOf(cls.Body, m.Index) - 1;
@@ -383,23 +455,38 @@ namespace SolidAgent
                 });
             }
 
-            // Find if/else chains on string equality
+            // Find if/else chains on string equality. Matches must be ADJACENT (within a
+            // few lines of each other) to count as a chain — three unrelated string
+            // comparisons scattered across different methods are not an OCP violation.
             var ifChainRx = new Regex(@"if\s*\(.+==\s*""(\w+)""\)", RegexOptions.Multiline);
-            var matches   = ifChainRx.Matches(cls.Body);
-            if (matches.Count >= 3)
+            var chainHits = ifChainRx.Matches(cls.Body).Cast<Match>()
+                .Select(cm => new { M = cm, Line = LineOf(cls.Body, cm.Index) })
+                .OrderBy(t => t.Line)
+                .ToList();
+
+            int start = 0;
+            while (start < chainHits.Count)
             {
-                int line = cls.StartLine + LineOf(cls.Body, matches[0].Index) - 1;
-                result.Violations.Add(new Violation
+                int end = start;
+                while (end + 1 < chainHits.Count && chainHits[end + 1].Line - chainHits[end].Line <= 3) end++;
+
+                int chainLen = end - start + 1;
+                if (chainLen >= 3)
                 {
-                    Id          = $"OCP-{idx++:D3}",
-                    Principle   = SolidPrinciple.OCP,
-                    Severity    = Severity.Medium,
-                    Title       = $"Type if/else chain in {cls.Name}",
-                    Description = "Long if/else chain comparing string types. Each new type means editing this method. Use polymorphism instead.",
-                    Location    = new CodeLocation { FilePath = filePath, FileName = Path.GetFileName(filePath), ClassName = cls.Name, StartLine = line },
-                    OriginalCode = Trim(matches[0].Value, 200),
-                    Evidence    = $"{matches.Count} string-comparison branches"
-                });
+                    int line = cls.StartLine + chainHits[start].Line - 1;
+                    result.Violations.Add(new Violation
+                    {
+                        Id          = $"OCP-{idx++:D3}",
+                        Principle   = SolidPrinciple.OCP,
+                        Severity    = Severity.Medium,
+                        Title       = $"Type if/else chain in {cls.Name}",
+                        Description = "Long if/else chain comparing string types. Each new type means editing this method. Use polymorphism instead.",
+                        Location    = new CodeLocation { FilePath = filePath, FileName = Path.GetFileName(filePath), ClassName = cls.Name, StartLine = line },
+                        OriginalCode = Trim(chainHits[start].M.Value, 200),
+                        Evidence    = $"{chainLen} adjacent string-comparison branches"
+                    });
+                }
+                start = end + 1;
             }
         }
 
@@ -410,19 +497,33 @@ namespace SolidAgent
         }
 
         // ── LSP ───────────────────────────────────────────────────────────────────
-        // Flag methods whose entire body is throw new NotImplementedException
+        // Flag substitutability breaks: methods that only throw NotImplemented/
+        // NotSupported (block or expression-bodied), and empty overrides that
+        // silently drop base-class behavior.
 
-        private void CheckLSP(ClassInfo cls, string filePath, FileAnalysisResult result, ref int idx)
+        private void CheckLSP(ClassInfo cls, string filePath, FileAnalysisResult result, ref int idx,
+                              HashSet<string> ispCovered = null)
         {
-            // Match: any method body that contains only a throw new NotImplementedException
-            var rx = new Regex(
-                @"(public|private|protected|override)\s+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*\{\s*throw\s+new\s+Not(Implemented|Supported)Exception[^}]*\}",
-                RegexOptions.Multiline | RegexOptions.Singleline);
+            ispCovered ??= new HashSet<string>();
 
+            // Throw-only bodies:  { throw new NotImplementedException(); }
+            // and expression-bodied:  => throw new NotImplementedException();
+            var throwRxs = new[]
+            {
+                new Regex(@"(public|private|protected|override)\s+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*\{\s*throw\s+new\s+Not(Implemented|Supported)Exception[^}]*\}",
+                    RegexOptions.Multiline | RegexOptions.Singleline),
+                new Regex(@"(public|private|protected|override)\s+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*=>\s*throw\s+new\s+Not(Implemented|Supported)Exception[^;]*;",
+                    RegexOptions.Multiline)
+            };
+
+            foreach (var rx in throwRxs)
             foreach (Match m in rx.Matches(cls.Body))
             {
                 string methodName = m.Groups[2].Value;
-                int    line       = cls.StartLine + LineOf(cls.Body, m.Index) - 1;
+                // Already reported as part of a fat-interface (ISP) violation — one
+                // root cause should not drag down two principle scores.
+                if (ispCovered.Contains(methodName)) continue;
+                int line = cls.StartLine + LineOf(cls.Body, m.Index) - 1;
 
                 result.Violations.Add(new Violation
                 {
@@ -434,6 +535,32 @@ namespace SolidAgent
                     Location    = new CodeLocation { FilePath = filePath, FileName = Path.GetFileName(filePath), ClassName = cls.Name, MemberName = methodName, StartLine = line },
                     OriginalCode = Trim(m.Value, 200),
                     Evidence    = $"throw new NotImplementedException in {methodName}"
+                });
+            }
+
+            // Empty overrides:  override void Attack() { }
+            // Silently dropping inherited behavior means the subclass no longer honors
+            // the base contract — callers holding the base type get surprised.
+            var emptyOverrideRx = new Regex(
+                @"(public|private|protected|internal)?\s*override\s+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*\{\s*\}",
+                RegexOptions.Multiline);
+
+            foreach (Match m in emptyOverrideRx.Matches(cls.Body))
+            {
+                string methodName = m.Groups[2].Value;
+                if (ispCovered.Contains(methodName)) continue;
+                int line = cls.StartLine + LineOf(cls.Body, m.Index) - 1;
+
+                result.Violations.Add(new Violation
+                {
+                    Id          = $"LSP-{idx++:D3}",
+                    Principle   = SolidPrinciple.LSP,
+                    Severity    = Severity.Medium,
+                    Title       = $"{cls.Name}.{methodName}() is an empty override",
+                    Description = "Override with an empty body silently removes the base-class behavior. Callers using the base type expect this method to do its job — implement it, call base, or rethink the hierarchy.",
+                    Location    = new CodeLocation { FilePath = filePath, FileName = Path.GetFileName(filePath), ClassName = cls.Name, MemberName = methodName, StartLine = line },
+                    OriginalCode = Trim(m.Value, 200),
+                    Evidence    = $"empty override body in {methodName}"
                 });
             }
         }
@@ -459,21 +586,32 @@ namespace SolidAgent
 
         // ── ISP — Implementor throws too many methods ─────────────────────────────
 
-        private void CheckISP_Implementor(ClassInfo cls, string filePath, FileAnalysisResult result, ref int idx)
+        // Returns the set of throwing method names covered by an ISP violation (empty if
+        // none fired) so CheckLSP can skip them — one root cause, one finding.
+        private HashSet<string> CheckISP_Implementor(ClassInfo cls, string filePath, FileAnalysisResult result, ref int idx)
         {
-            var throwRx   = new Regex(@"(public|override)\s+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*\{\s*throw\s+new\s+NotImplementedException[^}]*\}", RegexOptions.Singleline);
-            var throwMatches = throwRx.Matches(cls.Body);
-            int throwCount   = throwMatches.Count;
+            var covered = new HashSet<string>();
 
-            if (throwCount < 3) return;
-            if (cls.Methods.Count == 0) return;
-
-            double ratio = (double)throwCount / cls.Methods.Count * 100;
-            if (ratio < 50) return;
+            var throwRxs = new[]
+            {
+                new Regex(@"(public|override)\s+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*\{\s*throw\s+new\s+Not(Implemented|Supported)Exception[^}]*\}", RegexOptions.Singleline),
+                new Regex(@"(public|override)\s+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*=>\s*throw\s+new\s+Not(Implemented|Supported)Exception[^;]*;", RegexOptions.Multiline)
+            };
 
             var throwingNames = new List<string>();
-            foreach (Match m in throwMatches)
-                throwingNames.Add(m.Groups[2].Value);
+            foreach (var rx in throwRxs)
+                foreach (Match m in rx.Matches(cls.Body))
+                    if (!throwingNames.Contains(m.Groups[2].Value))
+                        throwingNames.Add(m.Groups[2].Value);
+
+            int throwCount = throwingNames.Count;
+            if (throwCount < 3) return covered;
+            if (cls.Methods.Count == 0) return covered;
+
+            double ratio = (double)throwCount / cls.Methods.Count * 100;
+            if (ratio < 50) return covered;
+
+            foreach (var n in throwingNames) covered.Add(n);
 
             result.Violations.Add(new Violation
             {
@@ -486,6 +624,8 @@ namespace SolidAgent
                 OriginalCode = Trim(cls.Body, 400),
                 Evidence    = "Unused: " + string.Join(", ", throwingNames)
             });
+
+            return covered;
         }
 
         private string Trim(string s, int max)
@@ -505,6 +645,10 @@ namespace SolidAgent
         public string         Reason      { get; set; } // why this score
         public int            Violations  { get; set; }
         public int            FilesScanned { get; set; }
+        // Severity-weighted findings per scanned file (High=3, Med=2, Low=1).
+        // This is the continuous number behind Score — it moves on every rescan,
+        // so fixing violations shows progress even within the same 1–5 band.
+        public float          Density     { get; set; }
     }
 
     public class SolidReport
@@ -521,12 +665,14 @@ namespace SolidAgent
 
     public static class RatingEngine
     {
-        // Score map from guide:
-        // 5 = Excellent  (0 violations)
-        // 4 = Very Good  (1–2 violations, Low severity only)
-        // 3 = Acceptable (3–5 violations, or any Medium)
-        // 2 = Weak       (6–9 violations, or any High)
-        // 1 = Poor       (10+ violations, or multiple High)
+        // Score map — density-based (like SonarQube's debt ratio / Code Climate GPA):
+        // score comes from severity-weighted findings PER SCANNED FILE, not absolute
+        // counts, so a 900-file game isn't judged on the same raw numbers as a 15-file
+        // jam project, and fixing violations moves the rating even before reaching zero.
+        //
+        // density = (High*3 + Medium*2 + Low*1) / files scanned
+        // 5 = 0 findings   4 = density ≤ 0.10   3 = ≤ 0.40   2 = ≤ 1.00   1 = > 1.00
+        // Small-count floors: a couple of non-High findings never tank a small project.
 
         // Score → label mapping. Target is 4 — anything below should NOT read as "good enough".
         // 5 = On Target
@@ -594,7 +740,7 @@ namespace SolidAgent
                     .Where(v => v.Principle == p)
                     .ToList();
 
-                int score = CalcScore(violations);
+                int score = CalcScore(violations, results.Count);
                 string[] reasons = p switch
                 {
                     SolidPrinciple.SRP => SRP_Reasons,
@@ -611,7 +757,8 @@ namespace SolidAgent
                     Label        = Labels[score],
                     Reason       = reasons[score],
                     Violations   = violations.Count,
-                    FilesScanned = results.Count
+                    FilesScanned = results.Count,
+                    Density      = WeightedLoad(violations) / System.Math.Max(1, results.Count)
                 });
             }
 
@@ -629,19 +776,29 @@ namespace SolidAgent
             return report;
         }
 
-        private static int CalcScore(List<Violation> violations)
+        private static float WeightedLoad(List<Violation> violations)
+            => violations.Sum(v => v.Severity == Severity.High   ? 3f
+                                 : v.Severity == Severity.Medium ? 2f
+                                 : 1f);
+
+        private static int CalcScore(List<Violation> violations, int filesScanned)
         {
             if (violations.Count == 0) return 5;
 
-            int highCount   = violations.Count(v => v.Severity == Severity.High);
-            int medCount    = violations.Count(v => v.Severity == Severity.Medium);
-            int total       = violations.Count;
+            float density = WeightedLoad(violations) / System.Math.Max(1, filesScanned);
 
-            if (highCount >= 2 || total >= 10) return 1;
-            if (highCount >= 1 || total >= 6)  return 2;
-            if (medCount  >= 1 || total >= 3)  return 3;
-            if (total <= 2)                    return 4;
-            return 3;
+            int score = density <= 0.10f ? 4
+                      : density <= 0.40f ? 3
+                      : density <= 1.00f ? 2
+                      : 1;
+
+            // Small-count floors: on a small project even one Medium finding produces a
+            // high density — a handful of non-High findings shouldn't read as "Critical".
+            int highCount = violations.Count(v => v.Severity == Severity.High);
+            if (highCount == 0 && violations.Count <= 2) score = System.Math.Max(score, 4);
+            else if (highCount == 0 && violations.Count <= 5) score = System.Math.Max(score, 3);
+
+            return score;
         }
     }
 }

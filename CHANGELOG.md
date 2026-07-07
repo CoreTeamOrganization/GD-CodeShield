@@ -1,7 +1,18 @@
 # Changelog
 All notable changes to GD CodeShield are documented here.
 
-## [Unreleased]
+## [1.4.0] - 2026-07-07
+### Changed
+- **SOLID rating engine reworked to density-based scoring** (the model used by SonarQube / Code Climate). A principle's 1–5 score now comes from severity-weighted findings *per scanned file* (High=3, Medium=2, Low=1) instead of absolute counts. This fixes two long-standing problems: a score of 4 was mathematically unreachable (the analyzer never emitted Low severity, and any Medium capped the score at 3), and fixing violations produced no visible rating change until the count hit absolute zero. Small-count floors keep a handful of non-High findings from tanking small projects. The results sidebar now shows the continuous density (e.g. `8 · 0.27/file`) next to each principle's stars so every rescan shows progress, even within the same band.
+- **SRP detection no longer treats method count as a violation.** A Medium SRP finding now requires two independent signals to agree: ≥2 method-name concern groups (each with ≥2 methods — one stray `PlaySound()` is not a second responsibility) *and* ≥2 unrelated Unity API families touched by the class body (Audio, UI, Persistence, Animation, Physics, Network, SceneFlow). Name-based groups alone produce a Low-severity review hint. Raw size (>15 non-lifecycle methods, up from >10 total) is a Low-severity informational note only. Well-organized single-concern classes with many methods — e.g. a level interaction controller — no longer drag the project score down.
+- SRP concern keywords: bare `Play*` no longer classifies as Audio (it matched `PlayerDied` etc.); replaced with `PlaySound/PlayMusic/PlayClip/PlayAudio/PlaySfx`.
+
+### Fixed
+- OCP switch detection counted `case` labels from the switch to the *end of the class*, so a later switch inflated an earlier one's case count and could flag 2-case switches. Case counting is now bounded to the switch's own block.
+- OCP if/else-chain detection counted string comparisons anywhere in the class, so three unrelated `if (s == "...")` checks in three different methods were reported as one "chain." Branches must now be adjacent (within 3 lines) to count.
+- The same `throw new NotImplementedException` methods were double-counted — once each as LSP violations and again inside an ISP fat-interface violation — so one root cause dragged down two principle scores. When the ISP finding fires, the individual LSP findings for those methods are suppressed.
+- LSP now also detects expression-bodied throws (`=> throw new NotImplementedException()`) and **empty overrides** (`override void Attack() { }`), the most common Unity-flavored substitutability break — reported at Medium severity.
+
 ### Added
 - **HTML report export** for SOLID Review, alongside the Word (.docx) export — on the results sidebar, the Preview window header, and the per-violation actions (File HTML). The HTML report is a self-contained, styled `.html` generated entirely in C# (no Node.js, Word, or npm required) so anyone can open it in a browser. Covers the same content: overall score, per-principle scores, violation/severity distributions, and the full violation list grouped by file.
 - **Preview report** button on the SOLID Review results screen, next to Download Word report. Opens an in-editor visual summary (modelled on Unity's Memory Profiler Summary tab): overall score bar, per-principle scores, violation distribution by principle, severity breakdown, and top files by violation count — each with a stacked bar and a colour-coded legend. The preview also has a one-click Download Word report shortcut.

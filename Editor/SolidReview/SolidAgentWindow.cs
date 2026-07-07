@@ -647,6 +647,12 @@ namespace SolidAgent
                         rating.Principle.ToString(),
                         BrandTokens.MakeStyle(BrandTokens.Fraunces, 14, BrandTokens.Navy, FontStyle.Bold));
 
+                    // Continuous density behind the star band — moves on every rescan,
+                    // so fixing violations shows progress before the score jumps a band.
+                    GUI.Label(new Rect(x + 64, y + 7, w - 194, 14),
+                        rating.Violations == 0 ? "" : $"{rating.Violations} · {rating.Density:F2}/file",
+                        _sFootnote);
+
                     string stars = BuildStars(rating.Score);
                     GUI.Label(new Rect(x + w - 130, y + 6, 120, 18),
                         stars,
