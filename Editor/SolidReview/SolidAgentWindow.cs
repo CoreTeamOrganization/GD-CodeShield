@@ -847,7 +847,7 @@ namespace SolidAgent
             y += 30;
 
             // Tabs
-            DrawTabBar(x, y, w);
+            DrawTabBar(x, y, w, v);
             y += 38;
 
             if (_activeTab == 0) DrawViolationTab(v, x, ref y, w);
@@ -872,9 +872,12 @@ namespace SolidAgent
             GUI.EndScrollView();
         }
 
-        private void DrawTabBar(float x, float y, float w)
+        private void DrawTabBar(float x, float y, float w, Violation v)
         {
-            string[] tabs = { "Violation", "Proposed fix", "Claude Code" };
+            // Low findings are informational notes — the UI must not label them
+            // "Violation" while their own description says they aren't one.
+            bool isNote = v != null && v.Severity == Severity.Low;
+            string[] tabs = { isNote ? "Note" : "Violation", "Proposed fix", "Claude Code" };
             float tx = x;
             for (int i = 0; i < tabs.Length; i++)
             {
@@ -908,7 +911,7 @@ namespace SolidAgent
         // ─── Violation tab ─────────────────────────────────────────────────────
         private void DrawViolationTab(Violation v, float x, ref float y, float w)
         {
-            DrawEyebrow(x, y, "WHAT IS WRONG");
+            DrawEyebrow(x, y, v.Severity == Severity.Low ? "OBSERVATION" : "WHAT IS WRONG");
             y += 24;
             GUI.Label(new Rect(x, y, w - 20, 80),
                 v.Description ?? "(no description)",
