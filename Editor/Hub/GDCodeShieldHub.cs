@@ -43,6 +43,7 @@ namespace GDCodeShield
             _stylesReady = false;
             _packageVersion = null;
             FetchPackageVersion();
+            UpdateChecker.CheckAsync(); // daily GitHub releases check — silent, throttled
         }
 
         // ─── Live version read ─────────────────────────────────────────────────
@@ -142,8 +143,42 @@ namespace GDCodeShield
             DrawLeftRail(padL, bodyY, leftW);
             DrawRightColumn(rightX, bodyY, rightW);
 
-            // ── Footer ─────────────────────────────────────────────────────────
+            // ── Update banner — shown only when GitHub has a newer release tag ──
             float footerY = H - 42;
+            if (UpdateChecker.UpdateAvailable(out string latestVer))
+            {
+                var banner = new Rect(padL, footerY - 36, contentW, 28);
+                BrandTokens.Fill(banner, BrandTokens.GoldTint);
+                BrandTokens.Fill(new Rect(banner.x, banner.y, 3, banner.height), BrandTokens.Gold);
+
+                GUI.Label(new Rect(banner.x + 14, banner.y + 6, banner.width - 140, 16),
+                    $"v{latestVer} is available — update GD CodeShield from the Package Manager.",
+                    BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeBody, BrandTokens.Navy, FontStyle.Bold));
+
+                // Open Package Manager on click (banner body)
+                var openArea = new Rect(banner.x, banner.y, banner.width - 40, banner.height);
+                EditorGUIUtility.AddCursorRect(openArea, MouseCursor.Link);
+                if (openArea.Contains(Event.current.mousePosition) &&
+                    Event.current.type == EventType.MouseDown && Event.current.button == 0)
+                {
+                    UnityEditor.PackageManager.UI.Window.Open("com.gamedistrict.codeshield");
+                    Event.current.Use();
+                }
+
+                // Dismiss ✕ — per version; reappears only for the next release
+                var closeR = new Rect(banner.xMax - 28, banner.y + 5, 18, 18);
+                GUI.Label(closeR, "✕", BrandTokens.MakeStyle(BrandTokens.Inter, 11, BrandTokens.WarmGray, FontStyle.Normal, TextAnchor.MiddleCenter));
+                EditorGUIUtility.AddCursorRect(closeR, MouseCursor.Link);
+                if (closeR.Contains(Event.current.mousePosition) &&
+                    Event.current.type == EventType.MouseDown && Event.current.button == 0)
+                {
+                    UpdateChecker.Dismiss(latestVer);
+                    Event.current.Use();
+                    Repaint();
+                }
+            }
+
+            // ── Footer ─────────────────────────────────────────────────────────
             BrandTokens.HairlineH(padL, footerY, contentW, BrandTokens.Taupe);
 
             string ver = _packageVersion != null ? "v" + _packageVersion : "v—";

@@ -9,6 +9,7 @@ All notable changes to GD CodeShield are documented here.
 - **ContractChecker wording no longer oversells the check.** Result summaries now read "Public API preserved — behavior not verified, review the change yourself" instead of "Contract intact." The check compares method signatures only; it never verified behavior, and the old wording implied it did.
 
 ### Added
+- **Update notification in the Hub.** CodeShield now checks GitHub releases (at most once per day, silently, fire-and-forget) and shows a dismissible banner above the Hub footer when a newer version tag exists: "vX.Y.Z is available — update GD CodeShield from the Package Manager." Clicking the banner opens the Package Manager on the package; dismissing it hides that version's banner until the next release.
 - **Intended-use disclaimer** on the results screen and in every report footer (Word, HTML, in-editor preview): "CodeShield ratings track code health for teams and self-assessment — they are not designed for evaluating individual developers."
 
 ### Fixed
