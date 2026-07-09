@@ -112,7 +112,11 @@ namespace SolidAgent
                 FileName = Path.GetFileName(filePath)
             };
 
-            string source = File.ReadAllText(filePath);
+            // Strip comments before detection — regex detectors otherwise match
+            // commented-out code (e.g. an "override void Foo() { }" example in a
+            // comment reads as a real empty override). Offsets/line numbers are
+            // preserved: comment characters become spaces, newlines stay.
+            string source = StripComments(File.ReadAllText(filePath));
             string[] lines = source.Split('\n');
             int idx = 1;
 
@@ -214,6 +218,59 @@ namespace SolidAgent
                 result.Add(info);
             }
             return result;
+        }
+
+        // Blank out // and /* */ comments, preserving every newline and all
+        // offsets so violation line numbers stay correct. String and char
+        // literals are left intact (OCP's if-chain detection needs them).
+        private static string StripComments(string source)
+        {
+            var chars = source.ToCharArray();
+            bool inStr = false, inChar = false, inVerbatim = false, lineC = false, blockC = false;
+
+            for (int i = 0; i < chars.Length; i++)
+            {
+                char c = chars[i];
+                char next = i + 1 < chars.Length ? chars[i + 1] : '\0';
+
+                if (lineC)
+                {
+                    if (c == '\n') lineC = false;
+                    else chars[i] = ' ';
+                    continue;
+                }
+                if (blockC)
+                {
+                    if (c == '*' && next == '/') { chars[i] = ' '; chars[i + 1] = ' '; blockC = false; i++; }
+                    else if (c != '\n') chars[i] = ' ';
+                    continue;
+                }
+                if (inVerbatim)
+                {
+                    if (c == '"' && next == '"') i++;        // escaped quote inside @"..."
+                    else if (c == '"') inVerbatim = false;
+                    continue;
+                }
+                if (inStr)
+                {
+                    if (c == '\\') i++;
+                    else if (c == '"') inStr = false;
+                    continue;
+                }
+                if (inChar)
+                {
+                    if (c == '\\') i++;
+                    else if (c == '\'') inChar = false;
+                    continue;
+                }
+
+                if (c == '@' && next == '"') { inVerbatim = true; i++; }
+                else if (c == '"')  inStr  = true;
+                else if (c == '\'') inChar = true;
+                else if (c == '/' && next == '/') { chars[i] = ' '; chars[i + 1] = ' '; lineC = true; i++; }
+                else if (c == '/' && next == '*') { chars[i] = ' '; chars[i + 1] = ' '; blockC = true; i++; }
+            }
+            return new string(chars);
         }
 
         // Extract the { ... } block starting from a position
@@ -942,6 +999,12 @@ namespace SolidAgent
             int highCount = violations.Count(v => v.Severity == Severity.High);
             if (highCount == 0 && violations.Count <= 2) score = System.Math.Max(score, 4);
             else if (highCount == 0 && violations.Count <= 5) score = System.Math.Max(score, 3);
+
+            // Low findings are informational notes/hints, not violations — they may
+            // nudge a score but must never sink a principle on their own. A principle
+            // with zero Medium/High findings never drops below 4.
+            if (violations.All(v => v.Severity == Severity.Low))
+                score = System.Math.Max(score, 4);
 
             return score;
         }

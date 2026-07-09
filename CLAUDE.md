@@ -68,7 +68,7 @@ Match (green), Mismatch (red), Missing (orange), NotConfigured, Ignored, Empty
 ### Data Flow
 1. `SolidAnalyzer` scans `.cs` files → `FileAnalysisResult` with `List<Violation>`
 2. Checks SRP, OCP, LSP, ISP (DIP excluded — tight coupling OK for casual mobile games)
-3. Scoring: 1-5 per principle — density-based (SonarQube-style): severity-weighted findings per scanned file (High=3, Med=2, Low=1); 0 findings=5, ≤0.10=4, ≤0.40=3, ≤1.00=2, else 1, plus small-count floors so a few non-High findings never tank a small project. `PrincipleRating.Density` is the continuous number shown next to the stars in the sidebar
+3. Scoring: 1-5 per principle — density-based (SonarQube-style): severity-weighted findings per scanned file (High=3, Med=2, Low=1); 0 findings=5, ≤0.10=4, ≤0.40=3, ≤1.00=2, else 1, plus small-count floors so a few non-High findings never tank a small project. All-Low findings floor at 4 — notes inform, never punish. `PrincipleRating.Density` is the continuous number shown next to the stars in the sidebar. Comments are stripped (offset-preserving, strings kept) before all detection — never regex-match raw source
 4. AI fixes via `AIFixGenerator` → Claude API (key in EditorPrefs)
 5. Export via `SolidReportExporter` → `.docx` using bundled Node.js + docx package
 6. `SolidTelemetry.ReportScanCompleted()` fires after every scan — fire-and-forget POST, swallows all failures silently (a dead webhook produces no error anywhere)
