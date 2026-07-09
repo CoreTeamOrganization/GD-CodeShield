@@ -38,6 +38,9 @@ namespace SolidAgent
         private bool _showFolderPicker = false;
         private Vector2 _folderPickerScroll;
         private HashSet<string> _expandedFolders = new HashSet<string>();
+        // Directory listing cache — IMGUI repaints on every scroll tick / mouse move,
+        // and the picker must never hit the filesystem per frame. Cleared on open.
+        private Dictionary<string, List<string>> _folderChildCache = new Dictionary<string, List<string>>();
 
         // ─── Scan output ───────────────────────────────────────────────────────
         private List<FileAnalysisResult> _results = new List<FileAnalysisResult>();
@@ -60,7 +63,7 @@ namespace SolidAgent
         private GUIStyle _sBrand, _sCrumbs, _sH1, _sH2, _sH3, _sLede, _sEyebrow,
                          _sBody, _sMuted, _sStatNum, _sStatLabel, _sFootnote,
                          _sMono, _sBtn, _sBtnGold, _sPrincipleLetter, _sStars, _sFraunces,
-                         _sDisclaimer;
+                         _sDisclaimer, _sFolderExpander, _sFolderName, _sFolderNameSel;
         private bool _stylesReady;
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -320,6 +323,7 @@ namespace SolidAgent
             if (TextButton(pickRect, pickLabel, _showFolderPicker))
             {
                 _showFolderPicker = !_showFolderPicker;
+                if (_showFolderPicker) _folderChildCache.Clear(); // fresh listing on open
                 Repaint();
             }
             cy += 50;
@@ -405,19 +409,29 @@ namespace SolidAgent
 
         private List<string> GetTopLevelAssetFolders()
         {
+            return GetChildFolders(Application.dataPath)
+                .Where(d => Path.GetFileName(d) != "Editor")
+                .ToList();
+        }
+
+        // Cached, filtered directory listing. All picker code paths go through this —
+        // the raw Directory.GetDirectories calls per repaint were the scroll lag.
+        private List<string> GetChildFolders(string path)
+        {
+            if (_folderChildCache.TryGetValue(path, out var cached)) return cached;
             var list = new List<string>();
             try
             {
-                if (!Directory.Exists(Application.dataPath)) return list;
-                foreach (var d in Directory.GetDirectories(Application.dataPath))
-                {
-                    string name = Path.GetFileName(d);
-                    if (name.StartsWith(".")) continue;
-                    if (name == "Editor")    continue;
-                    list.Add(d.Replace('\\', '/'));
-                }
+                if (Directory.Exists(path))
+                    foreach (var d in Directory.GetDirectories(path))
+                    {
+                        string name = Path.GetFileName(d);
+                        if (name.StartsWith(".")) continue;
+                        list.Add(d.Replace('\\', '/'));
+                    }
             }
             catch { }
+            _folderChildCache[path] = list;
             return list;
         }
 
@@ -436,9 +450,9 @@ namespace SolidAgent
             bool hasSubs = HasSubfolders(folderPath);
             if (hasSubs)
             {
+                _sFolderExpander ??= BrandTokens.MakeStyle(BrandTokens.Inter, 9, BrandTokens.Ink);
                 var exp = new Rect(row.x, row.y + 4, 12, 14);
-                GUI.Label(exp, expanded ? "▾" : "▸",
-                    BrandTokens.MakeStyle(BrandTokens.Inter, 9, BrandTokens.Ink));
+                GUI.Label(exp, expanded ? "▾" : "▸", _sFolderExpander);
                 if (exp.Contains(Event.current.mousePosition) &&
                     Event.current.type == EventType.MouseDown && Event.current.button == 0)
                 {
@@ -467,32 +481,24 @@ namespace SolidAgent
             }
 
             // Name
+            _sFolderName    ??= BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeBody, BrandTokens.Ink);
+            _sFolderNameSel ??= BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeBody, BrandTokens.Navy);
             GUI.Label(new Rect(row.x + 36, row.y + 4, row.width - 40, 14), name,
-                BrandTokens.MakeStyle(BrandTokens.Inter, BrandTokens.SizeBody,
-                    selected ? BrandTokens.Navy : BrandTokens.Ink));
+                selected ? _sFolderNameSel : _sFolderName);
 
             y += 24;
 
             // Children
             if (expanded && hasSubs)
             {
-                try
-                {
-                    foreach (var sub in Directory.GetDirectories(folderPath))
-                    {
-                        string sn = Path.GetFileName(sub);
-                        if (sn.StartsWith(".")) continue;
-                        DrawFolderRow(sub.Replace('\\', '/'), depth + 1, ref y, w);
-                    }
-                }
-                catch { }
+                foreach (var sub in GetChildFolders(folderPath))
+                    DrawFolderRow(sub, depth + 1, ref y, w);
             }
         }
 
         private bool HasSubfolders(string path)
         {
-            try { return Directory.GetDirectories(path).Length > 0; }
-            catch { return false; }
+            return GetChildFolders(path).Count > 0;
         }
 
         // Counts visible rows for one folder subtree, mirroring DrawFolderRow's
@@ -500,19 +506,9 @@ namespace SolidAgent
         private int CountVisibleFolderRows(string folderPath)
         {
             int count = 1; // the folder's own row
-            if (_expandedFolders.Contains(folderPath) && HasSubfolders(folderPath))
-            {
-                try
-                {
-                    foreach (var sub in Directory.GetDirectories(folderPath))
-                    {
-                        string sn = Path.GetFileName(sub);
-                        if (sn.StartsWith(".")) continue;
-                        count += CountVisibleFolderRows(sub.Replace('\\', '/'));
-                    }
-                }
-                catch { }
-            }
+            if (_expandedFolders.Contains(folderPath))
+                foreach (var sub in GetChildFolders(folderPath))
+                    count += CountVisibleFolderRows(sub);
             return count;
         }
 

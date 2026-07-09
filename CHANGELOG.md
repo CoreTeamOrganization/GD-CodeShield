@@ -14,6 +14,7 @@ All notable changes to GD CodeShield are documented here.
 ### Fixed
 - Scanning screen's "files processed" counter froze at 40 on larger projects (it counted the 40-entry rolling activity feed instead of the actual result count) while the percentage kept climbing.
 - **Comments are stripped before detection** (offsets and line numbers preserved; string literals untouched). Commented-out code — a throw-only method in a `/* */` block, an `override void Foo() { }` example in a `//` comment — no longer produces findings. Found by running CodeShield on its own source: the LSP detector flagged its own explanatory comment.
+- **Folder picker scroll no longer stutters.** The picker listed directories from disk on every IMGUI repaint — top-level listing, a recursive row count over the expanded tree, and a has-subfolders check per visible row, hundreds of filesystem calls per frame while scrolling. Directory listings are now cached (refreshed each time the picker opens) and row label styles are no longer allocated per frame. Scan-screen jank also fixed: per-file analysis no longer blocks the editor UI thread, and the SRP cohesion analysis only runs on classes where it can change the verdict.
 - **Low-severity notes can no longer sink a principle's score.** A principle whose findings are all Low now scores at least 4 — informational notes nudge, they never punish. Previously enough size notes could drag a principle to 2 while each note's own text said "this is not a violation."
 
 ## [1.4.0] - 2026-07-07
