@@ -307,16 +307,20 @@ namespace SolidAgent
 
         private void DrawHomeRight(float x, float y, float w, float h)
         {
-            // The folder picker grows with its expanded folders (no inner scroll view —
-            // nested scrolling felt broken). When the grown content overflows the
-            // window, the whole column scrolls as one page instead.
-            float pickerH = _showFolderPicker ? MeasureFolderPickerHeight() : 0;
-            float contentH = 32 + 50 + (_showFolderPicker ? pickerH + 14 : 0) + 32 + 70 + 26;
+            // START stays pinned at the bottom of the column — the growing picker must
+            // never push it out of view. Only the content above it (selection row,
+            // picker, hint) scrolls, in one page-level scroll context (no nesting).
+            const float bottomH = 56 + 14 + 18;         // START + gap + footnote
+            float ox = x, oy = y, ow = w;               // pinned-area coords (outside scroll)
+            float scrollAreaH = h - bottomH - 12;
 
-            bool pageScroll = contentH > h;
+            float pickerH = _showFolderPicker ? MeasureFolderPickerHeight() : 0;
+            float contentH = 32 + 50 + (_showFolderPicker ? pickerH + 14 : 0) + 40;
+
+            bool pageScroll = contentH > scrollAreaH;
             if (pageScroll)
             {
-                _homeScroll = GUI.BeginScrollView(new Rect(x, y, w, h), _homeScroll,
+                _homeScroll = GUI.BeginScrollView(new Rect(x, y, w, scrollAreaH), _homeScroll,
                     new Rect(0, 0, w - 16, contentH));
                 x = 0; y = 0; w -= 16;
             }
@@ -363,10 +367,12 @@ namespace SolidAgent
             GUI.Label(new Rect(x, cy, w, 32),
                 "Tip: leave blank to scan the entire project. Pick folders to narrow scope.",
                 BrandTokens.MakeWrappedStyle(BrandTokens.Inter, BrandTokens.SizeFootnote, BrandTokens.WarmGray));
-            cy += 32;
 
-            // START button — big gold primary
-            var startRect = new Rect(x, cy, w, 56);
+            if (pageScroll) GUI.EndScrollView();
+
+            // START button — pinned to the column bottom, always visible
+            float by = oy + h - bottomH;
+            var startRect = new Rect(ox, by, ow, 56);
             bool canStart = _enabledPrinciples.Count > 0;
             bool startHover = startRect.Contains(Event.current.mousePosition);
 
@@ -387,13 +393,10 @@ namespace SolidAgent
                     Event.current.Use();
                 }
             }
-            cy += 70;
 
-            GUI.Label(new Rect(x, cy, w, 18),
+            GUI.Label(new Rect(ox, by + 56 + 14, ow, 18),
                 "No API key needed. Scoring runs locally; Claude Code optional for fixes.",
                 _sFootnote);
-
-            if (pageScroll) GUI.EndScrollView();
         }
 
         // ─── Folder picker (inline, grows with content) ────────────────────────
