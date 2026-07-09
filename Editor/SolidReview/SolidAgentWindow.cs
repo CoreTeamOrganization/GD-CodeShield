@@ -125,6 +125,15 @@ namespace SolidAgent
         // ═══════════════════════════════════════════════════════════════════════
         private void OnGUI()
         {
+            // Scroll views update their position when the wheel event arrives, but
+            // nothing repaints — the new position only renders on the NEXT event, so
+            // scrolling feels sticky/jumpy. Repaint immediately on scroll/drag/move
+            // (wantsMouseMove also keeps hover highlights live). Cheap now that draw
+            // paths are allocation- and IO-free.
+            wantsMouseMove = true;
+            var evt = Event.current.type;
+            bool inputRepaint = evt == EventType.ScrollWheel || evt == EventType.MouseMove || evt == EventType.MouseDrag;
+
             EnsureStyles();
             float W = position.width, H = position.height;
 
@@ -148,6 +157,8 @@ namespace SolidAgent
             }
 
             DrawFooter(padL, padR, W, H, footerH);
+
+            if (inputRepaint) Repaint();
         }
 
         // ─── Top bar (brand + crumbs) ─────────────────────────────────────────

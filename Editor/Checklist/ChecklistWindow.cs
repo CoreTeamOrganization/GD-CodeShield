@@ -116,6 +116,12 @@ namespace GDChecklist
 
         private void OnGUI()
         {
+            // Immediate repaint on scroll/move so scrolling and hover track the mouse
+            wantsMouseMove = true;
+            var evtType = Event.current.type;
+            if (evtType == EventType.ScrollWheel || evtType == EventType.MouseMove || evtType == EventType.MouseDrag)
+                Repaint();
+
             InitStyles();
             EditorGUI.DrawRect(new Rect(0, 0, position.width, position.height), C_BG);
 

@@ -95,6 +95,12 @@ namespace GDCodeShield
         // ═══════════════════════════════════════════════════════════════════════
         private void OnGUI()
         {
+            // Immediate repaint on scroll/move so scrolling and hover track the mouse
+            wantsMouseMove = true;
+            var evtType = Event.current.type;
+            if (evtType == EventType.ScrollWheel || evtType == EventType.MouseMove || evtType == EventType.MouseDrag)
+                Repaint();
+
             EnsureStyles();
             var W = position.width;
             var H = position.height;

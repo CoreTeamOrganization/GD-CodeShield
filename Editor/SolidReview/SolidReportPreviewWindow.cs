@@ -66,6 +66,12 @@ namespace SolidAgent
 
         private void OnGUI()
         {
+            // Immediate repaint on scroll/move so scrolling tracks the wheel (see SolidAgentWindow.OnGUI)
+            wantsMouseMove = true;
+            var evt = Event.current.type;
+            if (evt == EventType.ScrollWheel || evt == EventType.MouseMove || evt == EventType.MouseDrag)
+                Repaint();
+
             EnsureStyles();
             float W = position.width, H = position.height;
 
