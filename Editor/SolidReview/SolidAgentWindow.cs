@@ -552,10 +552,10 @@ namespace SolidAgent
             BrandTokens.Fill(new Rect(x, cy, w * _scanProgress, 2), BrandTokens.Gold);
             cy += 14;
 
-            int filesProcessed = _results.Count + _recentFiles.Count;
-            int filesTotal = Mathf.Max(filesProcessed, 1);
+            // _results grows once per analyzed file; _recentFiles is a 40-entry
+            // rolling window for the activity feed and must not be used as a counter.
             GUI.Label(new Rect(x, cy, w, 16),
-                $"{_recentFiles.Count} files processed",
+                $"{_results.Count} files processed",
                 _sMono);
             cy += 32;
 

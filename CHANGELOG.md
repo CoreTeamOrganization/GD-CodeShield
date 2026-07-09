@@ -11,6 +11,9 @@ All notable changes to GD CodeShield are documented here.
 ### Added
 - **Intended-use disclaimer** on the results screen and in every report footer (Word, HTML, in-editor preview): "CodeShield ratings track code health for teams and self-assessment — they are not designed for evaluating individual developers."
 
+### Fixed
+- Scanning screen's "files processed" counter froze at 40 on larger projects (it counted the 40-entry rolling activity feed instead of the actual result count) while the percentage kept climbing.
+
 ## [1.4.0] - 2026-07-07
 ### Changed
 - **SOLID rating engine reworked to density-based scoring** (the model used by SonarQube / Code Climate). A principle's 1–5 score now comes from severity-weighted findings *per scanned file* (High=3, Medium=2, Low=1) instead of absolute counts. This fixes two long-standing problems: a score of 4 was mathematically unreachable (the analyzer never emitted Low severity, and any Medium capped the score at 3), and fixing violations produced no visible rating change until the count hit absolute zero. Small-count floors keep a handful of non-High findings from tanking small projects. The results sidebar now shows the continuous density (e.g. `8 · 0.27/file`) next to each principle's stars so every rescan shows progress, even within the same band.
