@@ -1171,8 +1171,11 @@ namespace SolidAgent
         // ═══════════════════════════════════════════════════════════════════════
         //  SCAN LOGIC (preserved from original)
         // ═══════════════════════════════════════════════════════════════════════
+        private int _scanGen; // bumped per StartScan so a cancelled loop can't resume into a new scan
+
         private async void StartScan()
         {
+            int gen = ++_scanGen;
             _screen = Screen.Scanning;
             _statusMsg = "Reading scripts...";
             _scanProgress = 0f;
@@ -1209,31 +1212,48 @@ namespace SolidAgent
                 }
             });
 
+            // Batched analysis: every await resumes on the editor's sync context, i.e.
+            // costs a full editor frame — awaiting per FILE made scan wall-clock
+            // ~2 frames/file of pure scheduling. Analyzing a batch per worker-thread
+            // trip pays that frame tax once per BATCH files while the UI thread stays
+            // free (the old code blocked it with t.Wait per file).
+            const int BATCH = 8;
             var analyzer = new SolidAnalyzer();
-            for (int i = 0; i < files.Count; i++)
+            for (int i = 0; i < files.Count; i += BATCH)
             {
-                string f = files[i];
-                _statusMsg = Path.GetFileName(f);
-                _scanProgress = (float)(i + 1) / files.Count;
+                // Cancel pressed (or a newer scan started) → stop this loop
+                if (_screen != Screen.Scanning || gen != _scanGen) return;
 
-                FileAnalysisResult result = null;
-                var t = Task.Run(() => { try { result = analyzer.AnalyzeFile(f); } catch { } });
-                // Await instead of t.Wait(): Wait() blocks the editor UI thread for the
-                // whole analysis of each file, freezing every window between repaints.
-                if (await Task.WhenAny(t, Task.Delay(5000)) != t) result = null;
+                int start = i, end = Mathf.Min(i + BATCH, files.Count);
+                var batch = new List<FileAnalysisResult>();
 
-                if (result != null)
+                await Task.Run(() =>
+                {
+                    for (int k = start; k < end; k++)
+                    {
+                        string f = files[k];
+                        _statusMsg = Path.GetFileName(f);           // read by repaint; benign race
+                        _scanProgress = (float)(k + 1) / files.Count;
+
+                        FileAnalysisResult result = null;
+                        var t = Task.Run(() => { try { result = analyzer.AnalyzeFile(f); } catch { } });
+                        if (!t.Wait(5000)) result = null;           // worker thread — safe to block here
+                        if (result != null) batch.Add(result);
+                    }
+                });
+
+                if (_screen != Screen.Scanning || gen != _scanGen) return;
+                foreach (var result in batch)
                 {
                     // Filter to enabled principles
                     result.Violations = result.Violations
                         .Where(v => _enabledPrinciples.Contains(v.Principle)).ToList();
                     _results.Add(result);
 
-                    _recentFiles.Add((Path.GetFileName(f), result.Violations.Count));
+                    _recentFiles.Add((result.FileName, result.Violations.Count));
                     if (_recentFiles.Count > 40) _recentFiles.RemoveAt(0);
                 }
                 Repaint();
-                await Task.Delay(8);
             }
 
             int total = _results.Sum(r => r.Violations.Count);
