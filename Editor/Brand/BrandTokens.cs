@@ -5,6 +5,7 @@
 // Colors come straight from the Builder Notes design system. Don't invent new ones.
 // Fonts are loaded lazily from the bundled TTFs in Editor/Brand/Fonts/.
 
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using UnityEditor;
@@ -177,8 +178,27 @@ namespace GDCodeShield.Brand
         // ═══════════════════════════════════════════════════════════════════════
         //  STYLE FACTORIES — create GUIStyles with proper font + size + color
         // ═══════════════════════════════════════════════════════════════════════
+        // Style cache — MakeStyle is called from per-frame IMGUI draw code across every
+        // CodeShield window (120+ call sites). Allocating a GUIStyle per call meant
+        // dozens of allocations per repaint → GC hitches felt as UI lag. Cached
+        // instances are SHARED: callers must treat them as immutable and copy with
+        // `new GUIStyle(s)` if they need a variant.
+        private static readonly Dictionary<(int font, int size, uint color, FontStyle fs, TextAnchor anchor, bool wrap), GUIStyle>
+            _styleCache = new Dictionary<(int, int, uint, FontStyle, TextAnchor, bool), GUIStyle>();
+
         public static GUIStyle MakeStyle(Font font, int size, Color color, FontStyle fontStyle = FontStyle.Normal, TextAnchor anchor = TextAnchor.UpperLeft)
+            => CachedStyle(font, size, color, fontStyle, anchor, wrap: false);
+
+        public static GUIStyle MakeWrappedStyle(Font font, int size, Color color, FontStyle fontStyle = FontStyle.Normal)
+            => CachedStyle(font, size, color, fontStyle, TextAnchor.UpperLeft, wrap: true);
+
+        private static GUIStyle CachedStyle(Font font, int size, Color color, FontStyle fontStyle, TextAnchor anchor, bool wrap)
         {
+            Color32 c = color;
+            uint packed = (uint)(c.r | (c.g << 8) | (c.b << 16) | (c.a << 24));
+            var key = (font != null ? font.GetInstanceID() : 0, size, packed, fontStyle, anchor, wrap);
+            if (_styleCache.TryGetValue(key, out var cached)) return cached;
+
             var s = new GUIStyle();
             if (font != null) s.font = font;
             s.fontSize  = size;
@@ -187,15 +207,9 @@ namespace GDCodeShield.Brand
             s.normal.textColor = color;
             s.hover.textColor  = color;
             s.active.textColor = color;
-            s.wordWrap  = false;
+            s.wordWrap  = wrap;
             s.richText  = false;
-            return s;
-        }
-
-        public static GUIStyle MakeWrappedStyle(Font font, int size, Color color, FontStyle fontStyle = FontStyle.Normal)
-        {
-            var s = MakeStyle(font, size, color, fontStyle);
-            s.wordWrap = true;
+            _styleCache[key] = s;
             return s;
         }
     }
