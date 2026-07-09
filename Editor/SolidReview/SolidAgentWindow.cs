@@ -36,7 +36,6 @@ namespace SolidAgent
         };
         private HashSet<string> _scanRoots = new HashSet<string>();
         private bool _showFolderPicker = false;
-        private Vector2 _folderPickerScroll;
         private HashSet<string> _expandedFolders = new HashSet<string>();
         // Directory listing cache — IMGUI repaints on every scroll tick / mouse move,
         // and the picker must never hit the filesystem per frame. Cleared on open.
@@ -226,7 +225,7 @@ namespace SolidAgent
             float rightW = body.width - leftW - gap;
 
             DrawHomeLeft(body.x, body.y, leftW);
-            DrawHomeRight(rightX, body.y, rightW);
+            DrawHomeRight(rightX, body.y, rightW, body.height);
         }
 
         private void DrawHomeLeft(float x, float y, float w)
@@ -306,8 +305,22 @@ namespace SolidAgent
             }
         }
 
-        private void DrawHomeRight(float x, float y, float w)
+        private void DrawHomeRight(float x, float y, float w, float h)
         {
+            // The folder picker grows with its expanded folders (no inner scroll view —
+            // nested scrolling felt broken). When the grown content overflows the
+            // window, the whole column scrolls as one page instead.
+            float pickerH = _showFolderPicker ? MeasureFolderPickerHeight() : 0;
+            float contentH = 32 + 50 + (_showFolderPicker ? pickerH + 14 : 0) + 32 + 70 + 26;
+
+            bool pageScroll = contentH > h;
+            if (pageScroll)
+            {
+                _homeScroll = GUI.BeginScrollView(new Rect(x, y, w, h), _homeScroll,
+                    new Rect(0, 0, w - 16, contentH));
+                x = 0; y = 0; w -= 16;
+            }
+
             DrawEyebrow(x, y, "SCAN TARGET");
             float cy = y + 32;
 
@@ -339,10 +352,9 @@ namespace SolidAgent
             }
             cy += 50;
 
-            // Inline folder picker
+            // Inline folder picker — grows with expanded folders
             if (_showFolderPicker)
             {
-                float pickerH = 180;
                 DrawFolderPicker(x, cy, w, pickerH);
                 cy += pickerH + 14;
             }
@@ -380,9 +392,20 @@ namespace SolidAgent
             GUI.Label(new Rect(x, cy, w, 18),
                 "No API key needed. Scoring runs locally; Claude Code optional for fixes.",
                 _sFootnote);
+
+            if (pageScroll) GUI.EndScrollView();
         }
 
-        // ─── Folder picker (inline) ────────────────────────────────────────────
+        // ─── Folder picker (inline, grows with content) ────────────────────────
+        private float MeasureFolderPickerHeight()
+        {
+            int visibleRows = 0;
+            foreach (var folder in GetTopLevelAssetFolders())
+                visibleRows += CountVisibleFolderRows(folder);
+            // header (36) + top pad (6) + rows (24 each) + bottom pad (12)
+            return 36 + 6 + visibleRows * 24 + 12;
+        }
+
         private void DrawFolderPicker(float x, float y, float w, float h)
         {
             BrandTokens.Outline(new Rect(x, y, w, h), BrandTokens.Taupe);
@@ -395,27 +418,10 @@ namespace SolidAgent
                 Repaint();
             }
 
-            // Scrollable folder list
-            var viewRect = new Rect(x + 6, y + 36, w - 12, h - 44);
-            var folders = GetTopLevelAssetFolders();
-
-            // Content height must include every *expanded* subfolder row, not just the
-            // top-level count — otherwise scrolling stops short of the revealed children.
-            // Each row is 24px tall (see DrawFolderRow), starting at ly = 6.
-            int visibleRows = 0;
-            foreach (var folder in folders)
-                visibleRows += CountVisibleFolderRows(folder);
-            float contentH = 6 + visibleRows * 24 + 12;
-            _folderPickerScroll = GUI.BeginScrollView(viewRect, _folderPickerScroll,
-                new Rect(0, 0, viewRect.width - 14, contentH));
-
-            float ly = 6;
-            foreach (var folder in folders)
-            {
-                DrawFolderRow(folder, 0, ref ly, viewRect.width - 14);
-            }
-
-            GUI.EndScrollView();
+            // Folder list — drawn at full height, no inner scroll view
+            float ly = y + 36 + 6;
+            foreach (var folder in GetTopLevelAssetFolders())
+                DrawFolderRow(folder, 0, ref ly, w - 12, x + 6);
         }
 
         private List<string> GetTopLevelAssetFolders()
@@ -446,13 +452,13 @@ namespace SolidAgent
             return list;
         }
 
-        private void DrawFolderRow(string folderPath, int depth, ref float y, float w)
+        private void DrawFolderRow(string folderPath, int depth, ref float y, float w, float baseX)
         {
             bool selected = _scanRoots.Contains(folderPath);
             bool expanded = _expandedFolders.Contains(folderPath);
             string name = Path.GetFileName(folderPath);
 
-            var row = new Rect(8 + depth * 16, y, w - 16, 22);
+            var row = new Rect(baseX + 8 + depth * 16, y, w - 16, 22);
             bool hover = row.Contains(Event.current.mousePosition);
 
             if (hover) BrandTokens.Fill(row, BrandTokens.GoldTint);
@@ -503,7 +509,7 @@ namespace SolidAgent
             if (expanded && hasSubs)
             {
                 foreach (var sub in GetChildFolders(folderPath))
-                    DrawFolderRow(sub, depth + 1, ref y, w);
+                    DrawFolderRow(sub, depth + 1, ref y, w, baseX);
             }
         }
 
