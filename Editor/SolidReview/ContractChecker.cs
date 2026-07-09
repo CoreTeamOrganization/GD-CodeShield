@@ -86,14 +86,16 @@ namespace SolidAgent
             result.Passed = result.Removed.Count == 0 && result.CompilesParsed;
 
             // Build summary
+            // Wording: this check only verifies the public API surface survived.
+            // It does NOT verify behavior — never let the summary oversell that.
             if (!result.CompilesParsed)
                 result.Summary = "⚠  Fixed code has syntax errors — check braces/parentheses.";
             else if (result.Moved.Count > 0 && result.Removed.Count == 0)
-                result.Summary = $"✓  {result.Moved.Count} method(s) moved to new files. Contract intact.";
+                result.Summary = $"✓  Public API preserved ({result.Moved.Count} method(s) moved to new files) — behavior not verified, review the change yourself.";
             else if (result.Removed.Count == 0 && result.Added.Count == 0)
-                result.Summary = $"✓  All {result.Preserved.Count} public method(s) preserved. Contract intact.";
+                result.Summary = $"✓  Public API preserved ({result.Preserved.Count} method(s)) — behavior not verified, review the change yourself.";
             else if (result.Removed.Count == 0)
-                result.Summary = $"✓  All original methods preserved. {result.Added.Count} new method(s) added.";
+                result.Summary = $"✓  Public API preserved, {result.Added.Count} method(s) added — behavior not verified, review the change yourself.";
             else
                 result.Summary = $"⚠  {result.Removed.Count} method(s) truly removed. Review carefully before applying.";
 

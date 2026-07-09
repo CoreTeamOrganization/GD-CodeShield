@@ -18,11 +18,12 @@ Editor/
     ScanProgress.cs                 # Progress bar wrapper
     KeyValidator.cs                 # Key format validation
   SolidReview/
-    SolidAnalyzer.cs                # Regex-based SRP/OCP/LSP/ISP detector (namespace: SolidAgent)
+    SolidAnalyzer.cs                # Regex-based SRP/OCP/LSP/ISP detector + RatingEngine (namespace: SolidAgent)
     SolidAgentWindow.cs             # SOLID Review UI — sidebar + detail + AI fix
     AIFixGenerator.cs               # Claude API for AI fix suggestions
     SolidReportExporter.cs          # Word Doc (.docx) export via bundled Node.js
-    ContractChecker.cs              # LSP contract validation
+    SolidTelemetry.cs               # Posts scan results to Apps Script webhook → Google Sheet dashboard
+    ContractChecker.cs              # Fix-safety check: AI fix must preserve public API (not an LSP scanner)
     RegressionHarness.cs            # Post-fix regression scaffolding
     SolidAgentSetup.cs              # Setup placeholder
 ```
@@ -70,6 +71,23 @@ Match (green), Mismatch (red), Missing (orange), NotConfigured, Ignored, Empty
 3. Scoring: 1-5 per principle — density-based (SonarQube-style): severity-weighted findings per scanned file (High=3, Med=2, Low=1); 0 findings=5, ≤0.10=4, ≤0.40=3, ≤1.00=2, else 1, plus small-count floors so a few non-High findings never tank a small project. `PrincipleRating.Density` is the continuous number shown next to the stars in the sidebar
 4. AI fixes via `AIFixGenerator` → Claude API (key in EditorPrefs)
 5. Export via `SolidReportExporter` → `.docx` using bundled Node.js + docx package
+6. `SolidTelemetry.ReportScanCompleted()` fires after every scan — fire-and-forget POST, swallows all failures silently (a dead webhook produces no error anywhere)
+
+### Detection Rules (v1.5.0 — cohesion signal added 2026-07-09; base rework 2026-07-07)
+- **SRP** three-signal ladder: **High** = ≥2 method-name concern groups (each ≥2 methods) + ≥2 API families (`DependencySignals`: Audio, UI, Persistence, Animation, Physics, Network, SceneFlow) + ≥2 disjoint LCOM4 cohesion clusters. **Medium** = names + APIs agree, cohesion not computable. **Low** = single signal, cohesion veto (1 cluster = naming coincidence, capped at Low), or size note (>15 non-lifecycle methods). Cohesion (`ComputeCohesion`) clusters non-lifecycle methods connected by shared instance fields or direct calls; only trusted when ≥3 analyzable methods cover ≥60% of the class (Unity code works through transform/statics, so coverage is often too low — that's the Medium path). Lifecycle methods excluded from clustering (Awake/Start wire everything and would glue clusters). **Bare method count must never become Medium+ again** — that false positive is what broke team trust in v1.3. Delegation/orchestrator classes (≥70% one-line delegating methods) are exempt entirely.
+- **OCP**: `switch` on type-like var (≥3 cases, counted inside the switch's own block only — not to end of class) + string `if/else` chains (≥3 branches within 3 lines of each other — scattered comparisons don't count).
+- **LSP**: throw-only bodies (block or `=>` expression, NotImplemented/NotSupported) High; empty overrides (`override ... { }`) Medium. Skips methods already covered by an ISP fat-interface finding (one root cause = one finding, never two).
+- **ISP**: interface >5 methods Medium; implementor with ≥3 throwing methods and ≥50% ratio High. `CheckISP_Implementor` runs BEFORE `CheckLSP` and returns the covered method-name set.
+- Analyzer emits all three severities — Low exists since v1.4.0 and every UI/exporter path handles it.
+
+### Testing SolidAnalyzer
+`SolidAnalyzer.cs` is pure C# (no Unity refs) — compile it standalone with `dotnet` in a scratch classlib + fixture `.cs` files to regression-test detector changes without opening Unity. Score changes should always be verified this way before shipping.
+
+### Score History
+Scores from ≤v1.3.0 are NOT comparable to v1.4.0+ (old scale: 4 was unreachable, any Medium capped at 3, no size normalization). Telemetry sheet rows before 2026-07-07 are old-scale; remapped estimates in `GD_CodeShield_Telemetry_Remapped.xlsx` (Downloads).
+
+### Telemetry / Support Webhook
+One Apps Script URL is duplicated in THREE files: `SolidTelemetry.cs`, `ChecklistTelemetry.cs`, `ContactSupportWindow.cs` — update all three together (should be extracted to a shared constant). As of 2026-07-07 the deployed webhook returns 405 "unable to open the file" (dead deployment — likely redeployed under a new URL); no scans reach the sheet until it's fixed.
 
 ## Known API Constraints
 

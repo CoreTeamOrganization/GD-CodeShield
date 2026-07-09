@@ -111,6 +111,11 @@ namespace SolidAgent
             DrawSeverityDistribution(x, ref y, w);
             DrawTopFiles(x, ref y, w);
 
+            // Intended-use note — mirrors the docx/HTML report footers
+            var disclaimerStyle = new GUIStyle(_sMuted) { wordWrap = true };
+            GUI.Label(new Rect(x, y, w, 34), RatingEngine.Disclaimer, disclaimerStyle);
+            y += 44;
+
             if (Mathf.Abs(_contentH - y) > 2f) { _contentH = y; Repaint(); }
 
             GUI.EndScrollView();

@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to GD CodeShield are documented here.
 
+## [1.5.0] - 2026-07-09
+### Changed
+- **SRP detection upgraded with a structural cohesion signal (LCOM4-style).** The analyzer now maps each non-lifecycle method to the instance fields it touches and clusters methods connected by shared fields or direct calls. The result is a three-signal ladder: **High** when name groups + API families + disjoint field clusters all agree (structural proof the class serves multiple masters); **Medium** when names + APIs agree but cohesion can't be computed reliably; **Low** when high cohesion *vetoes* a naming coincidence — if every method works on the same data, the class is one responsibility no matter what the names suggest. The veto can only remove findings, never add them, so false positives strictly decrease. Evidence strings show the per-signal breakdown (concern groups, APIs touched, cluster count).
+- **AI fix prompt now assesses before fixing.** The generated Claude prompt instructs the model to first judge whether the finding is genuinely worth fixing — and to say so and stop if the refactor would hurt readability, add needless indirection, or the finding looks like a false positive — instead of unconditionally refactoring.
+- **ContractChecker wording no longer oversells the check.** Result summaries now read "Public API preserved — behavior not verified, review the change yourself" instead of "Contract intact." The check compares method signatures only; it never verified behavior, and the old wording implied it did.
+
+### Added
+- **Intended-use disclaimer** on the results screen and in every report footer (Word, HTML, in-editor preview): "CodeShield ratings track code health for teams and self-assessment — they are not designed for evaluating individual developers."
+
 ## [1.4.0] - 2026-07-07
 ### Changed
 - **SOLID rating engine reworked to density-based scoring** (the model used by SonarQube / Code Climate). A principle's 1–5 score now comes from severity-weighted findings *per scanned file* (High=3, Medium=2, Low=1) instead of absolute counts. This fixes two long-standing problems: a score of 4 was mathematically unreachable (the analyzer never emitted Low severity, and any Medium capped the score at 3), and fixing violations produced no visible rating change until the count hit absolute zero. Small-count floors keep a handful of non-High findings from tanking small projects. The results sidebar now shows the continuous density (e.g. `8 · 0.27/file`) next to each principle's stars so every rescan shows progress, even within the same band.

@@ -662,6 +662,9 @@ const doc = new Document({
         para([
           run("GAME DISTRICT  —  SOLID REVIEW TOOL", { size: 8, color: GD_YELLOW }),
           run("     AI can make mistakes. Always review before applying.", { size: 7, color: GD_MUTED }),
+        ], { before: 0, after: 0, borderBottom: undefined }),
+        para([
+          run("Ratings track code health for teams and self-assessment — they are not designed for evaluating individual developers.", { size: 7, color: GD_MUTED }),
         ], { before: 0, after: 0, borderBottom: undefined })
       ]})
     },

@@ -687,7 +687,12 @@ namespace SolidAgent
             GUI.Label(new Rect(x, y, w, 14),
                 (_report?.OverallLabel ?? "").ToUpper(),
                 BrandTokens.MakeStyle(BrandTokens.Inter, 10, barColor, FontStyle.Bold));
-            y += 24;
+            y += 20;
+
+            // Intended-use note: team health / self-assessment, never individual evaluation
+            var disclaimerStyle = new GUIStyle(_sFootnote) { wordWrap = true };
+            GUI.Label(new Rect(x, y, w, 42), RatingEngine.Disclaimer, disclaimerStyle);
+            y += 48;
 
             // Preview report — opens an in-editor visual summary (Memory-Profiler style)
             var previewRect = new Rect(x, y, w, 36);
@@ -786,6 +791,7 @@ namespace SolidAgent
             float h = 56 + 16 + 24; // stats + line + eyebrow
             h += (_report?.Ratings?.Count ?? 0) * 28;
             h += 8 + 16 + 22 + 28 + 10 + 28 + 16;       // overall block
+            h += 44;                                     // disclaimer under overall label
             h += 22; // showing N text
             var filtered = FilteredViolations();
             var byFile = filtered.GroupBy(v => v.Location.FilePath).Count();
@@ -1282,7 +1288,8 @@ namespace SolidAgent
                 sb.AppendLine();
             }
             sb.AppendLine("## What to do");
-            sb.AppendLine("Refactor the code to resolve this violation while preserving existing behavior.");
+            sb.AppendLine("First assess whether this finding is genuinely worth fixing. If the refactor would hurt readability, add needless indirection, or the finding looks like a false positive for this code, say so and stop — do not force a change.");
+            sb.AppendLine("Otherwise apply the smallest refactor that resolves it while preserving behavior.");
             sb.AppendLine("Keep changes minimal — do not introduce DIP (Dependency Inversion).");
             return sb.ToString();
         }

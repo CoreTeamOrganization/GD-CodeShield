@@ -240,7 +240,11 @@ namespace SolidAgent
         }
 
         // ── SRP ───────────────────────────────────────────────────────────────────
-        // Flag classes with too many methods or multiple distinct concern groups
+        // Three-signal ladder (v1.5.0):
+        //   High   = name concern groups + API families + disjoint cohesion clusters
+        //   Medium = names + APIs agree, cohesion not computable (neutral)
+        //   Low    = single signal, cohesion-vetoed, or size note
+        // Method count alone is NEVER more than a Low informational note.
 
         // Detect orchestrator/facade after SRP split.
         // Patterns that are NOT violations:
@@ -320,29 +324,57 @@ namespace SolidAgent
                 .Where(g => g.Value.Count >= 2)
                 .ToDictionary(g => g.Key, g => g.Value);
 
-            // Signal 2 — which Unity API families the class body actually touches.
-            // Field types + API calls are a closer proxy for "reasons to change"
+            // Signal 2 — which Unity API families the class body actually touches
+            // (field types AND calls both count: an AudioSource field is the same
+            // evidence as a PlayOneShot call). Closer proxy for "reasons to change"
             // than method names alone.
-            var clusters = DetectDependencyClusters(cls.Body);
+            var apiFamilies = DetectDependencyClusters(cls.Body);
+
+            // Signal 3 — structural cohesion (LCOM4). The strongest signal:
+            // upgrades name+API agreement to High when method groups work on
+            // disjoint field sets, and vetoes it down to Low when all methods
+            // share one field cluster (the naming match was coincidence).
+            var cohesion = ComputeCohesion(cls);
 
             // Size note: method count measures size, not responsibility. It never
             // becomes a Medium/High violation on its own. Lifecycle methods excluded.
             int nonLifecycle = cls.Methods.Count(m => !UnityLifecycle.Contains(m));
 
-            bool multiConcern = concerns.Count >= 2 && clusters.Count >= 2; // two independent signals agree
-            bool nameConcern  = concerns.Count >= 2;                        // names alone — lower confidence
+            bool multiConcern = concerns.Count >= 2 && apiFamilies.Count >= 2; // names + APIs agree
+            bool nameConcern  = concerns.Count >= 2;                           // names alone — lower confidence
             bool tooMany      = nonLifecycle > SRP_MAX_METHODS;
 
             if (!multiConcern && !nameConcern && !tooMany) return;
 
+            string signalEvidence =
+                  "Concern groups: " + string.Join(", ", concerns.Select(c => $"{c.Key}({c.Value.Count})"))
+                + (apiFamilies.Count > 0 ? " · APIs touched: " + string.Join(", ", apiFamilies) : "");
+
             Severity sev; string title, desc, evidence;
-            if (multiConcern)
+            if (multiConcern && cohesion.Valid && cohesion.Clusters >= 2)
             {
+                // Three independent signals agree — as close to proof as static analysis gets
+                sev      = Severity.High;
+                title    = $"{cls.Name} has multiple responsibilities";
+                desc     = $"'{cls.Name}' names {concerns.Count} concerns, touches {apiFamilies.Count} unrelated API families, AND its methods split into {cohesion.Clusters} groups working on disjoint field sets. This class structurally serves multiple masters — each group is a separate reason to change.";
+                evidence = signalEvidence + $" · Cohesion: {cohesion.Clusters} disjoint method-field clusters";
+            }
+            else if (multiConcern && cohesion.Valid && cohesion.Clusters == 1)
+            {
+                // Cohesion veto: names/APIs suggested mixed concerns, but every method
+                // works on the same data — likely one responsibility after all.
+                sev      = Severity.Low;
+                title    = $"{cls.Name} may mix concerns (cohesive)";
+                desc     = $"Method names and APIs in '{cls.Name}' suggest mixed concerns, but all methods operate on the same fields — likely a single responsibility. Review only if the class keeps growing.";
+                evidence = signalEvidence + " · Cohesion veto: all methods share one field cluster";
+            }
+            else if (multiConcern)
+            {
+                // Names + APIs agree; cohesion couldn't be computed reliably (neutral)
                 sev      = Severity.Medium;
                 title    = $"{cls.Name} has multiple responsibilities";
-                desc     = $"'{cls.Name}' groups methods around {concerns.Count} concerns and touches {clusters.Count} unrelated API families. Each class should have a single reason to change.";
-                evidence = "Concern groups: " + string.Join(", ", concerns.Select(c => $"{c.Key}({c.Value.Count})"))
-                         + " · APIs touched: " + string.Join(", ", clusters);
+                desc     = $"'{cls.Name}' groups methods around {concerns.Count} concerns and touches {apiFamilies.Count} unrelated API families. Each class should have a single reason to change.";
+                evidence = signalEvidence;
             }
             else if (nameConcern)
             {
@@ -393,6 +425,114 @@ namespace SolidAgent
                 if (Regex.IsMatch(body, pattern))
                     hits.Add(name);
             return hits;
+        }
+
+        // ── SRP cohesion signal (LCOM4-style) ─────────────────────────────────────
+        // Maps each non-lifecycle method to the instance fields it touches, then
+        // clusters methods connected by a shared field OR a direct call between them.
+        //   2+ disjoint clusters → the class structurally serves multiple masters
+        //   1 cluster            → naming/API signals were likely coincidence (veto)
+        // Lifecycle methods (Awake/Start/...) are excluded from clustering — they
+        // wire everything up and would glue unrelated clusters together.
+        // The verdict is only trusted when the analysis covers most of the class
+        // (Valid) — Unity code often works through transform/statics rather than
+        // fields, and clustering the remaining sliver would be confident nonsense.
+
+        private class CohesionInfo
+        {
+            public bool Valid;       // enough coverage to trust Clusters
+            public int  Clusters;
+            public int  Analyzable;  // methods that touch at least one field
+        }
+
+        private CohesionInfo ComputeCohesion(ClassInfo cls)
+        {
+            var info = new CohesionInfo();
+
+            // Instance fields. Auto-properties and method declarations don't match:
+            // they have '{' or '(' where this pattern requires '=' or ';'.
+            var fieldRx = new Regex(
+                @"(?:private|protected|internal|public)\s+(?:static\s+)?(?:readonly\s+)?[\w<>\[\],]+\s+(\w+)\s*(?:=[^;]*)?;");
+            var fields = new List<string>();
+            foreach (Match m in fieldRx.Matches(cls.Body))
+                if (!fields.Contains(m.Groups[1].Value))
+                    fields.Add(m.Groups[1].Value);
+            if (fields.Count < 2) return info;
+
+            var bodies = new Dictionary<string, string>();
+            foreach (var mname in cls.Methods.Distinct())
+            {
+                if (UnityLifecycle.Contains(mname)) continue;
+                string mbody = ExtractMethodBody(cls.Body, mname);
+                if (mbody != null) bodies[mname] = mbody;
+            }
+            if (bodies.Count == 0) return info;
+
+            // Field usage per method. A field mention doesn't count when a local
+            // declaration shadows it ("int count = 0;" hides the field 'count').
+            var uses = new Dictionary<string, HashSet<string>>();
+            foreach (var kv in bodies)
+            {
+                var used = new HashSet<string>();
+                foreach (var f in fields)
+                {
+                    string esc = Regex.Escape(f);
+                    if (!Regex.IsMatch(kv.Value, @"\b" + esc + @"\b")) continue;
+                    if (Regex.IsMatch(kv.Value,
+                        @"(?:^|[;{}(]\s*)(?:var|int|float|double|bool|string|long|[A-Z][\w<>\[\],]*)\s+" + esc + @"\s*(?:[=;,)]|in\b)"))
+                        continue;
+                    used.Add(f);
+                }
+                if (used.Count > 0) uses[kv.Key] = used;
+            }
+
+            info.Analyzable = uses.Count;
+            int nonLifecycle = cls.Methods.Distinct().Count(m => !UnityLifecycle.Contains(m));
+            if (uses.Count < 3 || nonLifecycle == 0 || (float)uses.Count / nonLifecycle < 0.6f)
+                return info;
+
+            // Union-find over analyzable methods: connect on shared field or direct call
+            var names  = uses.Keys.ToList();
+            var parent = Enumerable.Range(0, names.Count).ToArray();
+            int Find(int i) { while (parent[i] != i) i = parent[i] = parent[parent[i]]; return i; }
+
+            for (int i = 0; i < names.Count; i++)
+                for (int j = i + 1; j < names.Count; j++)
+                {
+                    bool shareField = uses[names[i]].Overlaps(uses[names[j]]);
+                    bool calls =
+                        Regex.IsMatch(bodies[names[i]], @"\b" + Regex.Escape(names[j]) + @"\s*\(") ||
+                        Regex.IsMatch(bodies[names[j]], @"\b" + Regex.Escape(names[i]) + @"\s*\(");
+                    if (shareField || calls) parent[Find(i)] = Find(j);
+                }
+
+            info.Clusters = Enumerable.Range(0, names.Count).Select(Find).Distinct().Count();
+            info.Valid = true;
+            return info;
+        }
+
+        // Body of a named method: brace block or "=> expression;". Overloads are merged.
+        private string ExtractMethodBody(string classBody, string methodName)
+        {
+            var sigRx = new Regex(@"[\w<>\[\]]+\s+" + Regex.Escape(methodName) + @"\s*\(");
+            string combined = null;
+            foreach (Match m in sigRx.Matches(classBody))
+            {
+                int close = classBody.IndexOf(')', m.Index + m.Length - 1);
+                if (close < 0) continue;
+                int i = close + 1;
+                while (i < classBody.Length && char.IsWhiteSpace(classBody[i])) i++;
+                string part = null;
+                if (i < classBody.Length && classBody[i] == '{')
+                    part = ExtractBlock(classBody, i);
+                else if (i + 1 < classBody.Length && classBody[i] == '=' && classBody[i + 1] == '>')
+                {
+                    int semi = classBody.IndexOf(';', i);
+                    if (semi > 0) part = classBody.Substring(i + 2, semi - i - 2);
+                }
+                if (part != null) combined = combined == null ? part : combined + "\n" + part;
+            }
+            return combined;
         }
 
         private Dictionary<string, List<string>> DetectConcerns(List<string> methods)
@@ -665,6 +805,11 @@ namespace SolidAgent
 
     public static class RatingEngine
     {
+        // Shown in every report footer and on the results screen. Ratings measure
+        // code health for teams/self-assessment — never individual performance.
+        public const string Disclaimer =
+            "CodeShield ratings track code health for teams and self-assessment — they are not designed for evaluating individual developers.";
+
         // Score map — density-based (like SonarQube's debt ratio / Code Climate GPA):
         // score comes from severity-weighted findings PER SCANNED FILE, not absolute
         // counts, so a 900-file game isn't judged on the same raw numbers as a 15-file
