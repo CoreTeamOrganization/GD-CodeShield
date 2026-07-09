@@ -59,7 +59,8 @@ namespace SolidAgent
         // ─── Styles ────────────────────────────────────────────────────────────
         private GUIStyle _sBrand, _sCrumbs, _sH1, _sH2, _sH3, _sLede, _sEyebrow,
                          _sBody, _sMuted, _sStatNum, _sStatLabel, _sFootnote,
-                         _sMono, _sBtn, _sBtnGold, _sPrincipleLetter, _sStars, _sFraunces;
+                         _sMono, _sBtn, _sBtnGold, _sPrincipleLetter, _sStars, _sFraunces,
+                         _sDisclaimer;
         private bool _stylesReady;
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -690,8 +691,8 @@ namespace SolidAgent
             y += 20;
 
             // Intended-use note: team health / self-assessment, never individual evaluation
-            var disclaimerStyle = new GUIStyle(_sFootnote) { wordWrap = true };
-            GUI.Label(new Rect(x, y, w, 42), RatingEngine.Disclaimer, disclaimerStyle);
+            _sDisclaimer ??= new GUIStyle(_sFootnote) { wordWrap = true };
+            GUI.Label(new Rect(x, y, w, 42), RatingEngine.Disclaimer, _sDisclaimer);
             y += 48;
 
             // Preview report — opens an in-editor visual summary (Memory-Profiler style)
@@ -1221,7 +1222,9 @@ namespace SolidAgent
 
                 FileAnalysisResult result = null;
                 var t = Task.Run(() => { try { result = analyzer.AnalyzeFile(f); } catch { } });
-                if (!t.Wait(5000)) result = null;
+                // Await instead of t.Wait(): Wait() blocks the editor UI thread for the
+                // whole analysis of each file, freezing every window between repaints.
+                if (await Task.WhenAny(t, Task.Delay(5000)) != t) result = null;
 
                 if (result != null)
                 {

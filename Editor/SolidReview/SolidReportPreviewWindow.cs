@@ -112,8 +112,8 @@ namespace SolidAgent
             DrawTopFiles(x, ref y, w);
 
             // Intended-use note — mirrors the docx/HTML report footers
-            var disclaimerStyle = new GUIStyle(_sMuted) { wordWrap = true };
-            GUI.Label(new Rect(x, y, w, 34), RatingEngine.Disclaimer, disclaimerStyle);
+            // (_sMuted is already word-wrapped; no per-frame style allocation)
+            GUI.Label(new Rect(x, y, w, 34), RatingEngine.Disclaimer, _sMuted);
             y += 44;
 
             if (Mathf.Abs(_contentH - y) > 2f) { _contentH = y; Repaint(); }

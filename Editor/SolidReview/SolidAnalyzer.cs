@@ -387,12 +387,6 @@ namespace SolidAgent
             // than method names alone.
             var apiFamilies = DetectDependencyClusters(cls.Body);
 
-            // Signal 3 — structural cohesion (LCOM4). The strongest signal:
-            // upgrades name+API agreement to High when method groups work on
-            // disjoint field sets, and vetoes it down to Low when all methods
-            // share one field cluster (the naming match was coincidence).
-            var cohesion = ComputeCohesion(cls);
-
             // Size note: method count measures size, not responsibility. It never
             // becomes a Medium/High violation on its own. Lifecycle methods excluded.
             int nonLifecycle = cls.Methods.Count(m => !UnityLifecycle.Contains(m));
@@ -400,6 +394,15 @@ namespace SolidAgent
             bool multiConcern = concerns.Count >= 2 && apiFamilies.Count >= 2; // names + APIs agree
             bool nameConcern  = concerns.Count >= 2;                           // names alone — lower confidence
             bool tooMany      = nonLifecycle > SRP_MAX_METHODS;
+
+            // Signal 3 — structural cohesion (LCOM4). The strongest signal:
+            // upgrades name+API agreement to High when method groups work on
+            // disjoint field sets, and vetoes it down to Low when all methods
+            // share one field cluster (the naming match was coincidence).
+            // Only computed when it can change the outcome (multiConcern) — it's
+            // O(methods² × regex) and would make large-project scans crawl if it
+            // ran on every class.
+            var cohesion = multiConcern ? ComputeCohesion(cls) : new CohesionInfo();
 
             if (!multiConcern && !nameConcern && !tooMany) return;
 
