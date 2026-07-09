@@ -1270,15 +1270,22 @@ namespace SolidAgent
 
         private string BuildClaudeCodePrompt(Violation v)
         {
+            // Low findings are informational notes/hints, not violations — the prompt
+            // must not frame them as defects, or a skimming reader (human or AI)
+            // treats "review this" as "fix this".
+            bool isNote = v.Severity == Severity.Low;
+
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"# Fix SOLID violation in {Path.GetFileName(v.Location.FilePath)}");
+            sb.AppendLine(isNote
+                ? $"# Review SOLID note in {Path.GetFileName(v.Location.FilePath)}"
+                : $"# Fix SOLID violation in {Path.GetFileName(v.Location.FilePath)}");
             sb.AppendLine();
             sb.AppendLine($"**File:** {v.Location.FilePath}");
             sb.AppendLine($"**Line:** {v.Location.StartLine}");
             sb.AppendLine($"**Principle:** {v.Principle}");
             sb.AppendLine($"**Severity:** {v.Severity}");
             sb.AppendLine();
-            sb.AppendLine("## The problem");
+            sb.AppendLine(isNote ? "## The observation" : "## The problem");
             sb.AppendLine(v.Description);
             sb.AppendLine();
             if (!string.IsNullOrEmpty(v.Evidence))
@@ -1288,8 +1295,16 @@ namespace SolidAgent
                 sb.AppendLine();
             }
             sb.AppendLine("## What to do");
-            sb.AppendLine("First assess whether this finding is genuinely worth fixing. If the refactor would hurt readability, add needless indirection, or the finding looks like a false positive for this code, say so and stop — do not force a change.");
-            sb.AppendLine("Otherwise apply the smallest refactor that resolves it while preserving behavior.");
+            if (isNote)
+            {
+                sb.AppendLine("This is a Low-severity informational note, not a violation. The most likely correct outcome is 'no change needed' — only suggest a refactor if you find genuinely hidden responsibilities the note points at.");
+                sb.AppendLine("If the code is fine as it is, say so and stop.");
+            }
+            else
+            {
+                sb.AppendLine("First assess whether this finding is genuinely worth fixing. If the refactor would hurt readability, add needless indirection, or the finding looks like a false positive for this code, say so and stop — do not force a change.");
+                sb.AppendLine("Otherwise apply the smallest refactor that resolves it while preserving behavior.");
+            }
             sb.AppendLine("Keep changes minimal — do not introduce DIP (Dependency Inversion).");
             return sb.ToString();
         }
